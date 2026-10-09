@@ -58,8 +58,8 @@ fresh() {  # regenerate N x M unread mails (SEED, VARIETY env), restart IMAP, wi
   sleep 2
 }
 
-alive() { for c in odtest-db odtest-php odtest-imap; do [ "$(docker inspect -f '{{.State.Running}}' $c 2>/dev/null)" = true ] || { echo "CONTAINER DIED: $c (OOM? see docker inspect $c, lower PAR/profile)"; return 1; }; done; }
-fetch() { alive || return 1; php_env -e APP_FETCH_PARALLEL=${PAR:-1} odtest-php php artisan freescout:fetch-emails --days=7 2>&1 | grep -iE 'error|exception|fatal|deadlock' | head -5 || true; }
+alive() { local c; for c in odtest-db odtest-php odtest-imap; do [ "$(docker inspect -f '{{.State.Running}}' $c 2>/dev/null)" = true ] || { echo "CONTAINER DIED: $c (OOM? see docker inspect $c, lower PAR/profile)"; return 1; }; done; }
+fetch() { alive || return 1; php_env -e APP_FETCH_PARALLEL=${PAR:-1} odtest-php php artisan freescout:fetch-emails --days=7 2>&1 | grep -iE 'exception|fatal|deadlock|SQLSTATE' | head -5 || true; }
 check() { alive || return 1; php_env odtest-php php /app/tests/e2e/check.php /tmp/expected.json; }
 
 case_run() {  # name -> prints PASS/FAIL, returns 1 on failure
@@ -67,7 +67,7 @@ case_run() {  # name -> prints PASS/FAIL, returns 1 on failure
   local t0=$(date +%s)
   case $c in
     A) fetch;;                                                         # sequential, all in one run
-    B) PAR=${PAR:-4} fetch;;                                  # PAR is capped at 4 (8 OOMs the shared 8GB docker VM)                                           # parallel mailboxes
+    B) PAR=${PAR:-4} fetch;;                                           # parallel mailboxes; PAR max 4 (8 OOMs the shared 8GB docker VM)
     C) php_env odtest-php timeout 3 php artisan freescout:fetch-emails --days=7 >/dev/null 2>&1 || true; fetch;;   # killed mid-run, resumed
     D) fetch; fetch;;                                                  # idempotent second run
     *) if [ -x "$HERE/cases/$c.sh" ]; then "$HERE/cases/$c.sh"; else echo "unknown case $c"; return 2; fi;;

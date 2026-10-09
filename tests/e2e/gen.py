@@ -52,7 +52,7 @@ for i in range(1, N + 1):
     u = f"mb{i}@test.local"; users.append(u)
     d = f"{OUT}/{u}/Maildir"
     for s in ("cur", "new", "tmp"): os.makedirs(f"{d}/{s}", exist_ok=True)
-    tickets = []          # (message_id, sender, subject) of earlier new tickets, for replies
+    tickets = []          # (message_id, sender, subject, ts, raw) of earlier new tickets, for replies
     seq = 0
     def write(msg, ts):
         global seq
@@ -60,16 +60,18 @@ for i in range(1, N + 1):
         open(f"{d}/new/{int(ts)}.{i}_{seq}.gen", "w", encoding="utf-8", errors="surrogateescape").write(msg)
     j = 0
     while j < M:
-        ts = time.time() - rnd.randint(0, 3 * 86400)
+        now = time.time()
+        ts = now - rnd.randint(600, 3 * 86400)
         r = rnd.random()
         att = rnd.random() < 0.2
         if r < .20 and tickets:                                   # reply: same conversation
-            mid0, cust, subj = rnd.choice(tickets)
-            write(build(f"<r{i}-{j}@gen.test>", f"{cust} <{cust}>", u, "Re: " + subj, ts, in_reply_to=mid0, with_att=att), ts)
+            mid0, cust, subj, pts, _ = rnd.choice(tickets)
+            ts = pts + rnd.randint(1, int(now - pts))                # a reply is dated after its ticket; the app imports in date order
+            write(build(f"<r{i}-{j}@gen.test>", f"Customer {cust.split('@')[0]} <{cust}>", u, "Re: " + subj, ts, in_reply_to=mid0, with_att=att), ts)
             exp["threads"] += 1; exp["attachments"] += att
         elif r < .24 and tickets and V >= 2:                                 # exact duplicate delivery of an earlier ticket
-            mid0, cust, subj = rnd.choice(tickets)
-            write(build(mid0, f"{cust} <{cust}>", u, subj, ts), ts)
+            _, _, _, pts, raw = rnd.choice(tickets)
+            write(raw, pts)                                       # byte-identical redelivery; a different Date would be a new mail (#5591)
         else:                                                     # new ticket, odd encodings sometimes
             cust = f"cust{rnd.randint(1, 300)}@example.org"; senders.add(cust)
             mid = f"<m{i}-{j}@gen.test>"
@@ -79,12 +81,13 @@ for i in range(1, N + 1):
             if V >= 3 and rnd.random() < .1:
                 subj = rnd.choice(SUBJECTS_NONASCII) + f" {i}-{j}"
                 hdr_subj = email.header.Header(subj, "utf-8").encode()
-            write(build(mid, f"Customer {cust.split('@')[0]} <{cust}>", u, hdr_subj, ts, kind=kind, with_att=att), ts)
-            tickets.append((mid, cust, hdr_subj))
+            raw = build(mid, f"Customer {cust.split('@')[0]} <{cust}>", u, hdr_subj, ts, kind=kind, with_att=att)
+            write(raw, ts)
+            tickets.append((mid, cust, hdr_subj, ts, raw))
             exp["conversations"] += 1; exp["threads"] += 1; exp["attachments"] += att
         j += 1
 
-exp["customers"] = len(senders)
+exp["customers"] = len(senders) + N   # + one customer per mailbox address: createCustomers() deliberately does not exclude the To address (upstream, exclusion commented out)
 exp["mails_in_mailboxes"] = N * M
 open(os.path.join(os.path.dirname(OUT), "users"), "w").write("".join(f"{u}:{{PLAIN}}pw::::::\n" for u in users))
 json.dump(exp, open(os.path.join(os.path.dirname(OUT), "expected.json"), "w"))
