@@ -23,6 +23,25 @@ $upper = DB::table('emails')->whereRaw('BINARY email != LOWER(email)')->count();
 if ($upper) $fail[] = "$upper customer emails not lower-cased";
 $emptyConv = DB::table('conversations')->whereNotIn('id', DB::table('threads')->select('conversation_id'))->count();
 if ($emptyConv) $fail[] = "$emptyConv conversations without threads";
+// Attachments: Attachment::create() refuses empty content, so no row may be 0 bytes; every row's file must exist on disk with the recorded size.
+$zeroAtt = DB::table('attachments')->where('size', 0)->count();
+if ($zeroAtt) $fail[] = "$zeroAtt zero-byte attachments stored";
+// The multiset of stored sizes must equal the multiset of decoded attachment sizes the generator wrote (a truncated attachment keeps the count but not the size).
+if (isset($exp['attachment_sizes'])) {
+    $got = DB::table('attachments')->orderBy('size')->pluck('size')->map(function ($v) { return (int) $v; })->all();
+    if ($got !== $exp['attachment_sizes']) {
+        $miss = array_count_values($exp['attachment_sizes']); foreach ($got as $v) { if (isset($miss[$v]) && --$miss[$v] === 0) unset($miss[$v]); }
+        $fail[] = 'attachment sizes differ from generated: '.array_sum($miss).' expected sizes missing in DB (e.g. '.implode(',', array_slice(array_keys($miss), 0, 5)).')';
+    }
+}
+$noFile = 0; $badSize = 0; $noDir = 0;
+foreach (DB::table('attachments')->select('id', 'file_name', 'file_dir', 'size')->orderBy('id')->cursor() as $a) {
+    if (!$a->file_dir) { $noDir++; continue; }
+    $path = App\Attachment::DIRECTORY.DIRECTORY_SEPARATOR.$a->file_dir.$a->file_name;
+    if (!App\Attachment::getDisk()->exists($path)) $noFile++;
+    elseif (App\Attachment::getDisk()->size($path) != $a->size) $badSize++;
+}
+if ($noDir || $noFile || $badSize) $fail[] = "attachments: $noDir without file_dir, $noFile files missing on disk, $badSize with wrong size";
 if ($dupMsg) $fail[] = "$dupMsg duplicated message_id values in threads";
 if ($dupMail) $fail[] = "$dupMail duplicated customer emails";
 if ($orphans) $fail[] = "$orphans conversations without customer";
