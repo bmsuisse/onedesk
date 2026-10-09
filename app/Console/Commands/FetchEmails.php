@@ -235,6 +235,10 @@ class FetchEmails extends Command
             foreach ($running as $id => $p) {
                 if (!$p->isRunning()) {
                     $this->line($p->getOutput());
+                    // Killed (137) or fatal children would otherwise vanish silently.
+                    if ($p->getExitCode() !== 0) {
+                        $this->logError('Mailbox '.$id.': fetch process failed with exit code '.$p->getExitCode().'; '.trim($p->getErrorOutput()));
+                    }
                     unset($running[$id]);
                 }
             }
