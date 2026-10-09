@@ -19,6 +19,7 @@ use App\Subscription;
 use App\Thread;
 use App\User;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 //use Webklex\IMAP\Client;
 
 class FetchEmails extends Command
@@ -1378,66 +1379,75 @@ class FetchEmails extends Command
         }
         // Set folder id
         $conversation->updateFolder();
-        $conversation->save();
-
-        // Thread
-        $thread = new Thread();
-        $thread->conversation_id = $conversation->id;
-        $thread->user_id = $conversation->user_id;
-        $thread->type = Thread::TYPE_CUSTOMER;
-        $thread->status = $conversation->status;
-        $thread->state = Thread::STATE_PUBLISHED;
-        $thread->message_id = $message_id;
-        $thread->headers = $this->headerToStr($headers);
-        $thread->body = $body;
-        $thread->from = $from;
-        $thread->setTo($to);
-        $thread->setCc($cc);
-        $thread->setBcc($bcc);
-        $thread->source_via = Thread::PERSON_CUSTOMER;
-        $thread->source_type = Thread::SOURCE_TYPE_EMAIL;
-        $thread->customer_id = $customer->id;
-        $thread->created_by_customer_id = $customer->id;
-        $thread->created_at = $now;
-        $thread->updated_at = $now;
-        if ($new) {
-            $thread->first = true;
-        }
+        // Conversation, thread and attachments are saved atomically: a kill or exception
+        // must not leave a thread without its attachments (the mail would be skipped as duplicate).
+        DB::beginTransaction();
         try {
-            $thread->save();
-        } catch (\Exception $e) {
-            // Could not save thread.
-            // https://github.com/freescout-helpdesk/freescout/issues/3186
+            $conversation->save();
+
+            // Thread
+            $thread = new Thread();
+            $thread->conversation_id = $conversation->id;
+            $thread->user_id = $conversation->user_id;
+            $thread->type = Thread::TYPE_CUSTOMER;
+            $thread->status = $conversation->status;
+            $thread->state = Thread::STATE_PUBLISHED;
+            $thread->message_id = $message_id;
+            $thread->headers = $this->headerToStr($headers);
+            $thread->body = $body;
+            $thread->from = $from;
+            $thread->setTo($to);
+            $thread->setCc($cc);
+            $thread->setBcc($bcc);
+            $thread->source_via = Thread::PERSON_CUSTOMER;
+            $thread->source_type = Thread::SOURCE_TYPE_EMAIL;
+            $thread->customer_id = $customer->id;
+            $thread->created_by_customer_id = $customer->id;
+            $thread->created_at = $now;
+            $thread->updated_at = $now;
             if ($new) {
-                $conversation->deleteForever();
+                $thread->first = true;
             }
-            throw $e;
-        }
+            try {
+                $thread->save();
+            } catch (\Exception $e) {
+                // Could not save thread.
+                // https://github.com/freescout-helpdesk/freescout/issues/3186
+                if ($new) {
+                    $conversation->deleteForever();
+                }
+                throw $e;
+            }
 
-        $body_changed = false;
-        $saved_attachments = $this->saveAttachments($attachments, $thread->id);
-        if ($saved_attachments) {
+            $body_changed = false;
+            $saved_attachments = $this->saveAttachments($attachments, $thread->id);
+            if ($saved_attachments) {
 
-            // After attachments saved to the disk we can replace cids in body (for PLAIN and HTML body)
-            $thread->body = $this->replaceCidsWithAttachmentUrls($thread->body, $saved_attachments, $conversation, $prev_has_attachments);
-            $body_changed = true;
+                // After attachments saved to the disk we can replace cids in body (for PLAIN and HTML body)
+                $thread->body = $this->replaceCidsWithAttachmentUrls($thread->body, $saved_attachments, $conversation, $prev_has_attachments);
+                $body_changed = true;
             
-            foreach ($saved_attachments as $saved_attachment) {
-                if (!$saved_attachment['attachment']->embedded) {
-                    $thread->has_attachments = true;
-                    break;
+                foreach ($saved_attachments as $saved_attachment) {
+                    if (!$saved_attachment['attachment']->embedded) {
+                        $thread->has_attachments = true;
+                        break;
+                    }
                 }
             }
-        }
 
-        $new_body = Thread::replaceBase64ImagesWithAttachments($thread->body);
-        if ($new_body != $thread->body) {
-            $thread->body = $new_body;
-            $body_changed = true;
-        }
+            $new_body = Thread::replaceBase64ImagesWithAttachments($thread->body);
+            if ($new_body != $thread->body) {
+                $thread->body = $new_body;
+                $body_changed = true;
+            }
 
-        if ($body_changed) {
-            $thread->save();
+            if ($body_changed) {
+                $thread->save();
+            }
+            DB::commit();
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            throw $e;
         }
 
         // Update conversation here if needed.
@@ -1562,62 +1572,71 @@ class FetchEmails extends Command
         $conversation->user_updated_at = $now;
         // Set folder id
         $conversation->updateFolder();
-        $conversation->save();
+        // Conversation, thread and attachments are saved atomically: a kill or exception
+        // must not leave a thread without its attachments (the mail would be skipped as duplicate).
+        DB::beginTransaction();
+        try {
+            $conversation->save();
 
-        // Update folders counters
-        $this->dirty_mailbox_ids[$conversation->mailbox_id] = true;
+            // Update folders counters
+            $this->dirty_mailbox_ids[$conversation->mailbox_id] = true;
 
-        // Set CC for the thread to send user reply to CCed emails also.
-        if ($conv_cc) {
-            $cc = array_merge($cc, $conv_cc);
-        }
+            // Set CC for the thread to send user reply to CCed emails also.
+            if ($conv_cc) {
+                $cc = array_merge($cc, $conv_cc);
+            }
 
-        // Thread
-        $thread = new Thread();
-        $thread->conversation_id = $conversation->id;
-        $thread->user_id = $conversation->user_id;
-        $thread->type = Thread::TYPE_MESSAGE;
-        $thread->status = $conversation->status;
-        $thread->state = Thread::STATE_PUBLISHED;
-        $thread->message_id = $message_id;
-        $thread->headers = $this->headerToStr($headers);
-        $thread->body = $body;
-        $thread->from = $from;
-        // To must be customer's email
-        $thread->setTo([$conversation->customer_email]);
-        $thread->setCc($cc);
-        $thread->setBcc($bcc);
-        $thread->source_via = Thread::PERSON_USER;
-        $thread->source_type = Thread::SOURCE_TYPE_EMAIL;
-        $thread->customer_id = $conversation->customer_id;
-        $thread->created_by_user_id = $user_id;
-        $thread->created_at = $now;
-        $thread->updated_at = $now;
-        $thread->save();
+            // Thread
+            $thread = new Thread();
+            $thread->conversation_id = $conversation->id;
+            $thread->user_id = $conversation->user_id;
+            $thread->type = Thread::TYPE_MESSAGE;
+            $thread->status = $conversation->status;
+            $thread->state = Thread::STATE_PUBLISHED;
+            $thread->message_id = $message_id;
+            $thread->headers = $this->headerToStr($headers);
+            $thread->body = $body;
+            $thread->from = $from;
+            // To must be customer's email
+            $thread->setTo([$conversation->customer_email]);
+            $thread->setCc($cc);
+            $thread->setBcc($bcc);
+            $thread->source_via = Thread::PERSON_USER;
+            $thread->source_type = Thread::SOURCE_TYPE_EMAIL;
+            $thread->customer_id = $conversation->customer_id;
+            $thread->created_by_user_id = $user_id;
+            $thread->created_at = $now;
+            $thread->updated_at = $now;
+            $thread->save();
 
-        $body_changed = false;
-        $saved_attachments = $this->saveAttachments($attachments, $thread->id);
-        if ($saved_attachments) {
-            // After attachments saved to the disk we can replace cids in body (for PLAIN and HTML body)
-            $thread->body = $this->replaceCidsWithAttachmentUrls($thread->body, $saved_attachments, $conversation, $prev_has_attachments);
-            $body_changed = true;
+            $body_changed = false;
+            $saved_attachments = $this->saveAttachments($attachments, $thread->id);
+            if ($saved_attachments) {
+                // After attachments saved to the disk we can replace cids in body (for PLAIN and HTML body)
+                $thread->body = $this->replaceCidsWithAttachmentUrls($thread->body, $saved_attachments, $conversation, $prev_has_attachments);
+                $body_changed = true;
 
-            foreach ($saved_attachments as $saved_attachment) {
-                if (!$saved_attachment['attachment']->embedded) {
-                    $thread->has_attachments = true;
-                    break;
+                foreach ($saved_attachments as $saved_attachment) {
+                    if (!$saved_attachment['attachment']->embedded) {
+                        $thread->has_attachments = true;
+                        break;
+                    }
                 }
             }
-        }
 
-        $new_body = Thread::replaceBase64ImagesWithAttachments($thread->body);
-        if ($new_body != $thread->body) {
-            $thread->body = $new_body;
-            $body_changed = true;
-        }
+            $new_body = Thread::replaceBase64ImagesWithAttachments($thread->body);
+            if ($new_body != $thread->body) {
+                $thread->body = $new_body;
+                $body_changed = true;
+            }
 
-        if ($body_changed) {
-            $thread->save();
+            if ($body_changed) {
+                $thread->save();
+            }
+            DB::commit();
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            throw $e;
         }
 
         event(new UserReplied($conversation, $thread));
