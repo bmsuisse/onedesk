@@ -60,6 +60,9 @@ class FetchEmails extends Command
 
     public $extra_import = [];
 
+    // Mailboxes whose folder counters need a recount (flushed once per page).
+    protected $dirty_mailbox_ids = [];
+
     /**
      * Page size when requesting emails from mail server.
      */
@@ -195,6 +198,7 @@ class FetchEmails extends Command
                     $this->line('['.date('Y-m-d H:i:s').'] '.($i+1).') '.$extra_import['message']->getSubject());
                     $this->processMessage($extra_import['message'], $extra_import['message_id'], $extra_import['mailbox'], [], true);
                 }
+                $this->flushFolderCounters();
             }
 
             usleep($sleep);
@@ -424,17 +428,30 @@ class FetchEmails extends Command
 
                 // We have to sort messages manually, as they can be in non-chronological order
                 $messages = $this->sortMessage($messages);
-                foreach ($messages as $message_id => $message) {
-                    $this->line('['.date('Y-m-d H:i:s').'] '.$message_index.') '.$message->getSubject());
-                    $message_index++;
+                try {
+                    foreach ($messages as $message_id => $message) {
+                        $this->line('['.date('Y-m-d H:i:s').'] '.$message_index.') '.$message->getSubject());
+                        $message_index++;
 
-                    $dest_mailbox = \Eventy::filter('fetch_emails.mailbox_to_save_message', $mailbox, $folder);
-                    $this->processMessage($message, $message_id, $dest_mailbox, $this->mailboxes);
+                        $dest_mailbox = \Eventy::filter('fetch_emails.mailbox_to_save_message', $mailbox, $folder);
+                        $this->processMessage($message, $message_id, $dest_mailbox, $this->mailboxes);
+                    }
+                } finally {
+                    $this->flushFolderCounters();
                 }
             }
         }
 
         $client->disconnect();
+    }
+
+    public function flushFolderCounters()
+    {
+        $ids = array_keys($this->dirty_mailbox_ids);
+        $this->dirty_mailbox_ids = [];
+        foreach (Mailbox::whereIn('id', $ids)->get() as $mailbox) {
+            $mailbox->updateFoldersCounters();
+        }
     }
 
     public function processMessage($message, $message_id, $mailbox, $mailboxes, $extra = false)
@@ -1428,7 +1445,7 @@ class FetchEmails extends Command
         $conversation->save();
 
         // Update folders counters
-        $conversation->mailbox->updateFoldersCounters();
+        $this->dirty_mailbox_ids[$conversation->mailbox_id] = true;
 
         if ($new) {
             event(new CustomerCreatedConversation($conversation, $thread));
@@ -1543,7 +1560,7 @@ class FetchEmails extends Command
         $conversation->save();
 
         // Update folders counters
-        $conversation->mailbox->updateFoldersCounters();
+        $this->dirty_mailbox_ids[$conversation->mailbox_id] = true;
 
         // Set CC for the thread to send user reply to CCed emails also.
         if ($conv_cc) {
