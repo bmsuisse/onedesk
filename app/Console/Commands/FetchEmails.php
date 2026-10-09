@@ -58,7 +58,6 @@ class FetchEmails extends Command
      */
     public $mailboxes;
 
-    public $extra_import = [];
 
     // Mailboxes whose folder counters need a recount (flushed once per page).
     protected $dirty_mailbox_ids = [];
@@ -158,7 +157,6 @@ class FetchEmails extends Command
             $this->info('['.date('Y-m-d H:i:s').'] Mailbox: '.$mailbox->name);
 
             $this->mailbox = $mailbox;
-            $this->extra_import = [];
 
             $debug_log = '';
             
@@ -196,16 +194,6 @@ class FetchEmails extends Command
             if ($debug && $debug_log) {
                 $this->line($debug_log);
             }
-
-            // Import emails sent to several mailboxes at once.
-            if (count($this->extra_import)) {
-                $this->line('['.date('Y-m-d H:i:s').'] Importing emails sent to several mailboxes at once: '.count($this->extra_import));
-                foreach ($this->extra_import as $i => $extra_import) {
-                    $this->line('['.date('Y-m-d H:i:s').'] '.($i+1).') '.$extra_import['message']->getSubject());
-                    $this->processMessage($extra_import['message'], $extra_import['message_id'], $extra_import['mailbox'], [], true);
-                }
-                $this->flushFolderCounters();
-            }
         }
 
         if ($successfully && count($this->mailboxes)) {
@@ -218,7 +206,6 @@ class FetchEmails extends Command
 
         $this->info('['.date('Y-m-d H:i:s').'] Fetching finished');
 
-        $this->extra_import = [];
         $this->mailbox = null;
         $this->mailboxes = [];
     }
@@ -1088,6 +1075,7 @@ class FetchEmails extends Command
             ]);
 
             $new_thread = null;
+            $extra_mailboxes = [];
             if ($message_from_customer) {
                 // SAVE CUSTOMER MESSAGE.
 
@@ -1115,11 +1103,7 @@ class FetchEmails extends Command
                         foreach ($recipient_emails as $recipient_email) {
                             // No need to check mailbox aliases.
                             if (\App\Email::sanitizeEmail($check_mailbox->email) == $recipient_email) {
-                                $this->extra_import[] = [
-                                    'mailbox'    => $check_mailbox,
-                                    'message'    => $message,
-                                    'message_id' => $message_id,
-                                ];
+                                $extra_mailboxes[] = $check_mailbox;
                                 break;
                             }
                         }
@@ -1177,6 +1161,12 @@ class FetchEmails extends Command
             }
 
             if ($new_thread) {
+                // Import copies for other mailboxes before the message is marked as Seen,
+                // so that an interrupted run retries them instead of losing them.
+                foreach ($extra_mailboxes as $extra_mailbox) {
+                    $this->processMessage($message, $message_id, $extra_mailbox, [], true);
+                }
+
                 $this->setSeen($message, $mailbox);
                 $this->line('['.date('Y-m-d H:i:s').'] Thread successfully created: '.$new_thread->id);
 
