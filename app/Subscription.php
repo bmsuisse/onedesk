@@ -250,7 +250,7 @@ class Subscription extends Model
             $mailbox_user_ids = $conversation->mailbox->userIdsHavingAccess();
         }
 
-        $subscriptions = self::whereIn('user_id', $mailbox_user_ids)
+        $subscriptions = self::with('user')->whereIn('user_id', $mailbox_user_ids)
             ->whereIn('event', $events)
             ->get();
 
@@ -314,6 +314,8 @@ class Subscription extends Model
     public static function processEvents()
     {
         $notify = [];
+        // Mailbox user ids memo, valid for this call only.
+        $ids_by_mailbox = [];
 
         $delay = now()->addSeconds(Conversation::UNDO_TIMOUT);
 
@@ -334,13 +336,21 @@ class Subscription extends Model
             if ($mailbox_user_ids === null) {
                 $mailbox_user_ids = $event['conversation']->mailbox->userIdsHavingAccess();
             }*/
-            $mailbox_user_ids = $event['conversation']->mailbox->userIdsHavingAccess();
+            $mailbox = $event['conversation']->mailbox;
+            if (!isset($ids_by_mailbox[$mailbox->id])) {
+                $ids_by_mailbox[$mailbox->id] = $mailbox->userIdsHavingAccess();
+            }
+            $mailbox_user_ids = $ids_by_mailbox[$mailbox->id];
 
             // When conversation is moved to another mailbox
             // notify only users NOT having access to the original mailbox.
             // https://github.com/freescout-help-desk/freescout/issues/5580
             if ($event['event_type'] == self::EVENT_TYPE_USER_MOVED && !empty($event['extra_data']['from_mailbox'])) {
-                $original_mailbox_user_ids = $event['extra_data']['from_mailbox']->userIdsHavingAccess();
+                $from_mailbox = $event['extra_data']['from_mailbox'];
+                if (!isset($ids_by_mailbox[$from_mailbox->id])) {
+                    $ids_by_mailbox[$from_mailbox->id] = $from_mailbox->userIdsHavingAccess();
+                }
+                $original_mailbox_user_ids = $ids_by_mailbox[$from_mailbox->id];
                 $mailbox_user_ids = array_diff($mailbox_user_ids, $original_mailbox_user_ids);
             }
 
