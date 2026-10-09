@@ -34,8 +34,8 @@ up() {
   docker network create $NET >/dev/null 2>&1 || true
   # MariaDB: native on arm64 (no emulation noise in timings), drop-in for the MySQL 5.7 schema used here.
   docker run -d --name odtest-db --network $NET -e MARIADB_ROOT_PASSWORD=root -e MARIADB_DATABASE=e2e -e MARIADB_USER=e2e -e MARIADB_PASSWORD=e2e \
-    mariadb:10.11 --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --innodb-flush-log-at-trx-commit=2 >/dev/null
-  docker run -d --name odtest-php --network $NET -v "$REPO":/app -w /app onedesk-e2e-php sleep infinity >/dev/null
+    --memory ${DB_MEM:-2g} mariadb:10.11 --innodb-buffer-pool-size=512M --max-connections=200 --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --innodb-flush-log-at-trx-commit=2 >/dev/null
+  docker run -d --name odtest-php --network $NET --memory ${PHP_MEM:-3g} -v "$REPO":/app -w /app onedesk-e2e-php sleep infinity >/dev/null
   until docker exec odtest-db mariadb -ue2e -pe2e -e 'select 1' >/dev/null 2>&1; do sleep 2; done
   step "migrate + seed $N mailboxes"
   php_env odtest-php php artisan migrate --force -n >/dev/null
@@ -47,7 +47,7 @@ fresh() {  # regenerate N x M unread mails (SEED, VARIETY env), restart IMAP, wi
   load
   docker rm -f odtest-imap >/dev/null 2>&1 || true
   rm -rf $WORK/mail && SEED=${SEED:-42} VARIETY=${VARIETY:-99} python3 $HERE/gen.py $N $M $WORK/mail 2>$WORK/gen.log && chmod -R a+rwX $WORK/mail
-  docker run -d --name odtest-imap --network $NET -v $WORK/mail:/mail -v $WORK/users:/etc/dovecot/users -v $HERE/docker/dovecot.conf:/etc/dovecot/dovecot.conf onedesk-e2e-dovecot >/dev/null
+  docker run -d --name odtest-imap --network $NET --memory 512m -v $WORK/mail:/mail -v $WORK/users:/etc/dovecot/users -v $HERE/docker/dovecot.conf:/etc/dovecot/dovecot.conf onedesk-e2e-dovecot >/dev/null
   sql "SET FOREIGN_KEY_CHECKS=0; TRUNCATE threads; TRUNCATE conversations; TRUNCATE customers; TRUNCATE emails; TRUNCATE attachments; TRUNCATE polycast_events; SET FOREIGN_KEY_CHECKS=1;" 2>/dev/null
   docker exec odtest-php sh -c 'rm -rf /app/storage/app/attachment/* 2>/dev/null; true'
   php_env odtest-php php artisan freescout:clear-cache >/dev/null 2>&1 || true
@@ -55,15 +55,16 @@ fresh() {  # regenerate N x M unread mails (SEED, VARIETY env), restart IMAP, wi
   sleep 2
 }
 
-fetch() { php_env -e APP_FETCH_PARALLEL=${PAR:-1} odtest-php php artisan freescout:fetch-emails --days=7 2>&1 | grep -iE 'error|exception|fatal|deadlock' | head -5 || true; }
-check() { php_env odtest-php php $HERE/check.php /tmp/expected.json; }
+alive() { for c in odtest-db odtest-php odtest-imap; do [ "$(docker inspect -f '{{.State.Running}}' $c 2>/dev/null)" = true ] || { echo "CONTAINER DIED: $c (OOM? see docker inspect $c, lower PAR/profile)"; return 1; }; done; }
+fetch() { alive || return 1; php_env -e APP_FETCH_PARALLEL=${PAR:-1} odtest-php php artisan freescout:fetch-emails --days=7 2>&1 | grep -iE 'error|exception|fatal|deadlock' | head -5 || true; }
+check() { alive || return 1; php_env odtest-php php $HERE/check.php /tmp/expected.json; }
 
 case_run() {  # name -> prints PASS/FAIL, returns 1 on failure
   local c=$1; load; step "case $c ($N mailboxes x $M mails)"; fresh
   local t0=$(date +%s)
   case $c in
     A) fetch;;                                                         # sequential, all in one run
-    B) PAR=${PAR:-4} fetch;;                                           # parallel mailboxes
+    B) PAR=${PAR:-4} fetch;;                                  # PAR is capped at 4 (8 OOMs the shared 8GB docker VM)                                           # parallel mailboxes
     C) php_env odtest-php timeout 3 php artisan freescout:fetch-emails --days=7 >/dev/null 2>&1 || true; fetch;;   # killed mid-run, resumed
     D) fetch; fetch;;                                                  # idempotent second run
     *) if [ -x "$HERE/cases/$c.sh" ]; then "$HERE/cases/$c.sh"; else echo "unknown case $c"; return 2; fi;;
