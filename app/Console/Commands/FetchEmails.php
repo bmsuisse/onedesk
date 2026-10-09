@@ -372,6 +372,7 @@ class FetchEmails extends Command
             }
             $total_pages = ($page_size > 0) ? (int) ceil($total_messages / $page_size) : 1;
 
+            $prev_ids = [];
             for ($page = 1; $page <= $total_pages; $page++) {
                 // Get messages.
                 $last_error = '';
@@ -423,6 +424,17 @@ class FetchEmails extends Command
                 // Unseen set is exhausted (mails were marked \Seen on previous pages).
                 if ($unseen && !count($messages)) {
                     break;
+                }
+
+                // Nothing was marked \Seen since the previous page: re-requesting page 1 would
+                // return the same mails again (poison mails), so stop instead of starving the mailbox.
+                if ($unseen) {
+                    $ids = array_keys($messages->all());
+                    if ($ids && $ids === $prev_ids) {
+                        $this->logError('Folder: '.$folder->name.'; Stopped: '.count($ids).' unseen mails could not be processed');
+                        break;
+                    }
+                    $prev_ids = $ids;
                 }
 
                 $message_index = 1;
@@ -1183,10 +1195,12 @@ class FetchEmails extends Command
                 $this->logError('Error occurred processing message');
             }
         } catch (\Exception $e) {
-            // Transient DB errors (deadlock, lost connection) must not mark the mail Seen: it is retried on the next run.
-            // Duplicate entry (1062) and non-DB errors are deterministic, keep marking Seen.
+            // Only transient DB errors (deadlock, lock wait timeout, lost connection) leave the mail unseen
+            // to be retried on the next run. Everything else is deterministic (too long value, bad charset,
+            // duplicate entry...) and retrying it forever would let one mail block the mailbox.
             $transient_db_error = $e instanceof \Illuminate\Database\QueryException
-                && (int) ($e->errorInfo[1] ?? 0) !== 1062;
+                && (in_array((int) ($e->errorInfo[1] ?? 0), [1205, 1213, 2006, 2013], true)
+                    || ($e->errorInfo[0] ?? '') === '40001');
             if (!$transient_db_error) {
                 $this->setSeen($message, $mailbox);
             }
