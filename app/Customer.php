@@ -944,7 +944,7 @@ class Customer extends Model
 
         $email = Email::sanitizeLength($email);
 
-        $email_obj = Email::where('email', $email)->first();
+        $email_obj = Email::with('customer')->where('email', $email)->first();
         if ($email_obj) {
             $customer = $email_obj->customer;
 

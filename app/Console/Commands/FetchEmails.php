@@ -27,6 +27,9 @@ class FetchEmails extends Command
 
     const MAX_SLEEP = 500000;
 
+    // Customers of the message being processed (sanitized email => Customer).
+    protected $message_customers = [];
+
     /**
      * The name and signature of the console command.
      *
@@ -1023,7 +1026,7 @@ class FetchEmails extends Command
                 // It will always return an empty value as it's Bcc.
                 $this->attrToArray($message->getBcc())
             );
-            $this->createCustomers($emails, $mailbox->getEmails());
+            $this->message_customers = $this->createCustomers($emails, $mailbox->getEmails());
 
             $date = $this->attrToDate($message->getDate());
 
@@ -1098,7 +1101,7 @@ class FetchEmails extends Command
 
                 if (\Eventy::filter('fetch_emails.should_save_thread', true, $data) !== false) {
                     // SendAutoReply listener will check bounce flag and will not send an auto reply if this is an auto responder.
-                    $new_thread = $this->saveCustomerThread($mailbox, $data['message_id'], $data['prev_thread'], $data['from'], $data['to'], $data['cc'], $data['bcc'], $data['subject'], $data['body'], $data['attachments'], $data['message']->getHeader(), $data['date']);
+                    $new_thread = $this->saveCustomerThread($mailbox, $data['message_id'], $data['prev_thread'], $data['from'], $data['to'], $data['cc'], $data['bcc'], $data['subject'], $data['body'], $data['attachments'], $data['message']->getHeader(), $data['date'], $this->message_customers);
                 } else {
                     $this->line('['.date('Y-m-d H:i:s').'] Hook fetch_emails.should_save_thread returned false. Skipping message.');
                     $this->setSeen($message, $mailbox);
@@ -1269,7 +1272,7 @@ class FetchEmails extends Command
     /**
      * Save email from customer as thread.
      */
-    public function saveCustomerThread($mailbox, $message_id, $prev_thread, $from, $to, $cc, $bcc, $subject, $body, $attachments, $headers, $date)
+    public function saveCustomerThread($mailbox, $message_id, $prev_thread, $from, $to, $cc, $bcc, $subject, $body, $attachments, $headers, $date, $customers = [])
     {
         // Fetch date & time setting.
         $use_mail_date_on_fetching = config('app.use_mail_date_on_fetching');
@@ -1287,7 +1290,7 @@ class FetchEmails extends Command
         $prev_conv_cc = $conv_cc;
 
         // Customers are created before with email and name
-        $customer = Customer::create($from);
+        $customer = $customers[\App\Email::sanitizeEmail($from)] ?? Customer::create($from);
         if ($prev_thread) {
             $conversation = $prev_thread->conversation;
 
@@ -1952,11 +1955,13 @@ class FetchEmails extends Command
      */
     public function createCustomers($emails, $exclude_emails)
     {
+        // One entry per address within the message: first non-empty name wins, From goes first.
+        $items = [];
         foreach ($emails as $item) {
-            // Email belongs to mailbox
-            // if (in_array(Email::sanitizeEmail($item->mail), $exclude_emails)) {
-            //     continue;
-            // }
+            $email = \App\Email::sanitizeEmail($item->mail);
+            if (!$email) {
+                continue;
+            }
             $data = [];
             if (!empty($item->personal)) {
                 $name_parts = Customer::parseName($item->personal);
@@ -1967,8 +1972,19 @@ class FetchEmails extends Command
                     $data['last_name'] = $name_parts['last_name'];
                 }
             }
-            Customer::create($item->mail, $data);
+            if (!isset($items[$email])) {
+                $items[$email] = ['mail' => $item->mail, 'data' => $data];
+            } elseif (empty($items[$email]['data']) && $data) {
+                $items[$email]['data'] = $data;
+            }
         }
+
+        $customers = [];
+        foreach ($items as $email => $item) {
+            $customers[$email] = Customer::create($item['mail'], $item['data']);
+        }
+
+        return $customers;
     }
 
     public function setSeen($message, $mailbox)
