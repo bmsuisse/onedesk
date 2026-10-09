@@ -43,7 +43,7 @@ up() {
   php_env odtest-php php artisan package:discover >/dev/null 2>&1 || true
   php_env odtest-php php artisan migrate --force -n >/dev/null
   fresh
-  php_env odtest-php php $HERE/seed.php $N
+  php_env odtest-php php /app/tests/e2e/seed.php $N
 }
 
 fresh() {  # regenerate N x M unread mails (SEED, VARIETY env), restart IMAP, wipe imported rows
@@ -60,7 +60,7 @@ fresh() {  # regenerate N x M unread mails (SEED, VARIETY env), restart IMAP, wi
 
 alive() { for c in odtest-db odtest-php odtest-imap; do [ "$(docker inspect -f '{{.State.Running}}' $c 2>/dev/null)" = true ] || { echo "CONTAINER DIED: $c (OOM? see docker inspect $c, lower PAR/profile)"; return 1; }; done; }
 fetch() { alive || return 1; php_env -e APP_FETCH_PARALLEL=${PAR:-1} odtest-php php artisan freescout:fetch-emails --days=7 2>&1 | grep -iE 'error|exception|fatal|deadlock' | head -5 || true; }
-check() { alive || return 1; php_env odtest-php php $HERE/check.php /tmp/expected.json; }
+check() { alive || return 1; php_env odtest-php php /app/tests/e2e/check.php /tmp/expected.json; }
 
 case_run() {  # name -> prints PASS/FAIL, returns 1 on failure
   local c=$1; load; step "case $c ($N mailboxes x $M mails)"; fresh
@@ -78,7 +78,7 @@ case_run() {  # name -> prints PASS/FAIL, returns 1 on failure
 
 bench() {  # fresh + one fetch with metrics
   load; fresh
-  php_env odtest-php php $HERE/bench.php "${1:-all}"
+  php_env odtest-php php /app/tests/e2e/bench.php "${1:-all}"
 }
 
 down() { docker rm -f odtest-db odtest-imap odtest-php >/dev/null 2>&1 || true; docker network rm $NET >/dev/null 2>&1 || true; }
