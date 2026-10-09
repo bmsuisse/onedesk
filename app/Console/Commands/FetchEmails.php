@@ -136,6 +136,7 @@ class FetchEmails extends Command
             }
         }
 
+        $fetched = 0;
         foreach ($this->mailboxes as $mailbox) {
             if (!$mailbox->isInActive() || !$mailbox->isActive()) {
                 continue;
@@ -147,6 +148,11 @@ class FetchEmails extends Command
             $sleep += 20000;
             if ($sleep > self::MAX_SLEEP) {
                 $sleep = self::MAX_SLEEP;
+            }
+
+            // Throttle between mailboxes only, no need to wait after the last one.
+            if ($fetched++) {
+                usleep($sleep);
             }
 
             $this->info('['.date('Y-m-d H:i:s').'] Mailbox: '.$mailbox->name);
@@ -200,8 +206,6 @@ class FetchEmails extends Command
                 }
                 $this->flushFolderCounters();
             }
-
-            usleep($sleep);
         }
 
         if ($successfully && count($this->mailboxes)) {
@@ -817,7 +821,9 @@ class FetchEmails extends Command
                         }
 
                         // Reply from user to his reply to the notification
+                        // The lookup by message_id has already been done above if there was no $prev_thread_id.
                         if (!$prev_thread
+                            && $prev_thread_id
                             && ($prev_thread = Thread::where('message_id', $prev_message_id)->first())
                             && $prev_thread->created_by_user_id
                             && $prev_thread->created_by_user->hasEmail($from)
