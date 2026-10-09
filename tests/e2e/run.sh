@@ -35,9 +35,12 @@ up() {
   # MariaDB: native on arm64 (no emulation noise in timings), drop-in for the MySQL 5.7 schema used here.
   docker run -d --name odtest-db --network $NET -e MARIADB_ROOT_PASSWORD=root -e MARIADB_DATABASE=e2e -e MARIADB_USER=e2e -e MARIADB_PASSWORD=e2e \
     --memory ${DB_MEM:-2g} mariadb:10.11 --innodb-buffer-pool-size=512M --max-connections=200 --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --innodb-flush-log-at-trx-commit=2 >/dev/null
-  docker run -d --name odtest-php --network $NET --memory ${PHP_MEM:-3g} -v "$REPO":/app -w /app onedesk-e2e-php sleep infinity >/dev/null
+  # Overlay bootstrap/cache and storage with scratch dirs: the repo's cached dev config (host od-db) must not win over our env, and fresh() must not wipe dev attachments.
+  rm -rf $WORK/bootcache $WORK/storage; mkdir -p $WORK/bootcache $WORK/storage/app $WORK/storage/logs $WORK/storage/framework/{cache,sessions,views}
+  docker run -d --name odtest-php --network $NET --memory ${PHP_MEM:-3g} -v "$REPO":/app -v $WORK/bootcache:/app/bootstrap/cache -v $WORK/storage:/app/storage -w /app onedesk-e2e-php sleep infinity >/dev/null
   until docker exec odtest-db mariadb -ue2e -pe2e -e 'select 1' >/dev/null 2>&1; do sleep 2; done
   step "migrate + seed $N mailboxes"
+  php_env odtest-php php artisan package:discover >/dev/null 2>&1 || true
   php_env odtest-php php artisan migrate --force -n >/dev/null
   fresh
   php_env odtest-php php $HERE/seed.php $N
