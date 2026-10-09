@@ -700,6 +700,8 @@ class ImapProtocol extends Protocol {
 
         $items = (array)$items;
         $itemList = $this->escapeList($items);
+        // The server answers BODY.PEEK[...] with a BODY[...] response item.
+        $responseItem = str_ireplace('BODY.PEEK[', 'BODY[', $items[0]);
 
         $this->sendRequest($this->buildUIDCommand("FETCH", $uid), [$set, $itemList], $tag);
         $result = [];
@@ -734,9 +736,9 @@ class ImapProtocol extends Protocol {
 
             // if we only want one item we return that one directly
             if (count($items) == 1) {
-                if ($tokens[2][0] == $items[0]) {
+                if ($tokens[2][0] == $items[0] || $tokens[2][0] == $responseItem) {
                     $data = $tokens[2][1];
-                } elseif ($uid === IMAP::ST_UID && isset($tokens[2][2]) && $tokens[2][2] == $items[0]) {
+                } elseif ($uid === IMAP::ST_UID && isset($tokens[2][2]) && ($tokens[2][2] == $items[0] || $tokens[2][2] == $responseItem)) {
                     $data = $tokens[2][3];
                 } else {
                     $expectedResponse = 0;
@@ -744,7 +746,7 @@ class ImapProtocol extends Protocol {
                     $count = count($tokens[2]);
                     // we start with 2, because 0 was already checked
                     for ($i = 2; $i < $count; $i += 2) {
-                        if ($tokens[2][$i] != $items[0]) {
+                        if ($tokens[2][$i] != $items[0] && $tokens[2][$i] != $responseItem) {
                             continue;
                         }
                         $data = $tokens[2][$i + 1];
@@ -795,22 +797,11 @@ class ImapProtocol extends Protocol {
      * @throws RuntimeException
      */
     public function content($uids, string $rfc = "RFC822", $uid = IMAP::ST_UID): array {
-        // Some servers do not support RFC822.TEXT or return header+text_body.
-        // BODY[TEXT] may automatically mark emails as read.
-        if (
-            // iCloud requires BODY[TEXT] instead of RFC822.TEXT.
-            // https://github.com/freescout-help-desk/freescout/issues/4202#issuecomment-2315369990
-            // https://github.com/Webklex/php-imap/commit/d4df579fbbe22bb5eca10b7bb3c0192b1f9a5bf7
-            (strtolower(trim($this->host)) == 'imap.mail.me.com')
-            // Stalwart.
-            // https://github.com/freescout-help-desk/freescout/issues/5581
-            || ($this->greeting && stripos($this->greeting, 'Stalwart') !== false)
-        ) {
-            $item = "BODY[TEXT]";
-        } else {
-            $item = "$rfc.TEXT";
-        }
-        
+        // BODY.PEEK[TEXT] does not set \Seen: the app flags a mail only after it has been imported,
+        // so a crash between fetch and import cannot lose it. Also works where RFC822.TEXT does not
+        // (iCloud, Stalwart: https://github.com/freescout-help-desk/freescout/issues/4202, /5581).
+        $item = "BODY.PEEK[TEXT]";
+
         $result = $this->fetch([$item], is_array($uids)?$uids:[$uids], null, $uid);
         return is_array($result) ? $result : [];
     }

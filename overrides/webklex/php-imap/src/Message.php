@@ -592,11 +592,8 @@ class Message {
      * @throws Exceptions\RuntimeException
      */
     public function peek(){
-        if ($this->fetch_options == IMAP::FT_PEEK) {
-            if ($this->getFlags()->get("seen") == null) {
-                $this->unsetFlag("Seen");
-            }
-        }elseif ($this->getFlags()->get("seen") != null) {
+        // Bodies are fetched with BODY.PEEK[TEXT], so FT_PEEK has no \Seen flag to reset.
+        if ($this->fetch_options != IMAP::FT_PEEK && $this->getFlags()->get("seen") != null) {
             $this->setFlag("Seen");
         }
     }
