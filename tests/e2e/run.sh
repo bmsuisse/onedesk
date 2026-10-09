@@ -6,6 +6,7 @@
 #   tests/e2e/run.sh up    [quick|full|huge]   start containers, migrate, seed mailboxes
 #   tests/e2e/run.sh fresh                     regenerate mails (SEED=, VARIETY=), wipe imported rows
 #   tests/e2e/run.sh bench [mailbox ids|all]   fresh + one fetch, print metrics JSON (wall, cpu, queries, mem)
+#   tests/e2e/run.sh profile [mailbox ids|all] fresh + one fetch under the Excimer sampler, print top 25 functions (self / inclusive)
 #   tests/e2e/run.sh case  <A|B|C|D|...>       fresh + one case + assertions (containers must be up)
 #   tests/e2e/run.sh exec  <cmd...>            run a command in the php container (e.g. artisan, php -l)
 #   tests/e2e/run.sh down
@@ -81,11 +82,17 @@ bench() {  # fresh + one fetch with metrics
   php_env odtest-php php /app/tests/e2e/bench.php "${1:-all}"
 }
 
+profile() {  # fresh + one fetch under the sampling profiler
+  load; fresh
+  php_env odtest-php php /app/tests/e2e/profile.php "${1:-all}"
+}
+
 down() { docker rm -f odtest-db odtest-imap odtest-php >/dev/null 2>&1 || true; docker network rm $NET >/dev/null 2>&1 || true; }
 
 case $CMD in
   up) up "${1:-quick}";;
   fresh) fresh;;
+  profile) profile "${1:-all}";;
   bench) bench "${1:-all}";;
   case) case_run "$1";;
   exec) php_env odtest-php "$@";;
@@ -93,5 +100,5 @@ case $CMD in
   test) trap down EXIT; up "${1:-quick}"; F=0
         for c in A B C D $(ls $HERE/cases 2>/dev/null | sed 's/\.sh$//'); do case_run $c || F=1; done
         step result; [ $F -eq 0 ] && echo "ALL E2E CASES PASSED" || { echo "E2E FAILED"; exit 1; };;
-  *) sed -n '2,15p' "$0"; exit 2;;
+  *) sed -n '2,16p' "$0"; exit 2;;
 esac

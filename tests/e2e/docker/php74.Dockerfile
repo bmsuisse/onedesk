@@ -6,3 +6,5 @@ RUN printf 'deb http://archive.debian.org/debian bullseye main\ndeb http://archi
  && docker-php-ext-configure gd --with-jpeg \
  && docker-php-ext-install pdo_mysql mbstring zip gd intl imap xml pcntl \
  && curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
+# Sampling profiler for `run.sh profile` (Excimer: low overhead, wall-clock timer; needs PHP >= 7.2).
+RUN (pecl install excimer-1.1.1 || pecl install excimer) && docker-php-ext-enable excimer
