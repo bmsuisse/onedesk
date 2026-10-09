@@ -114,6 +114,22 @@ class FetchEmails extends Command
             }
         );
 
+        // Fetch mailboxes in parallel: one child process per mailbox, N at a time.
+        // Children get the same --identifier, so the fetch monitor can still kill them.
+        $parallel = (int) config('app.fetch_parallel');
+        if ($parallel > 1 && $mailboxIds === []) {
+            $ids = $this->mailboxes->filter(function ($m) {
+                return $m->isInActive() && $m->isActive();
+            })->pluck('id')->all();
+
+            if (count($ids) > 1) {
+                $this->fetchParallel($ids, $parallel);
+                Subscription::processEvents();
+                $this->info('['.date('Y-m-d H:i:s').'] Fetching finished');
+                return;
+            }
+        }
+
         foreach ($this->mailboxes as $mailbox) {
             if (!$mailbox->isInActive() || !$mailbox->isActive()) {
                 continue;
@@ -194,6 +210,38 @@ class FetchEmails extends Command
         $this->extra_import = [];
         $this->mailbox = null;
         $this->mailboxes = [];
+    }
+
+    // ponytail: busy-poll pool, no per-mailbox retry; a mail sent to several
+    // mailboxes may race across children (duplicate-entry guard already covers it).
+    protected function fetchParallel(array $ids, int $parallel)
+    {
+        $queue = $ids;
+        $running = [];
+
+        while ($queue || $running) {
+            while ($queue && count($running) < $parallel) {
+                $id = array_shift($queue);
+                $p = new \Symfony\Component\Process\Process([
+                    PHP_BINARY, base_path('artisan'), 'freescout:fetch-emails',
+                    '--mailboxes='.$id,
+                    '--days='.$this->option('days'),
+                    '--unseen='.$this->option('unseen'),
+                    '--debug='.$this->option('debug'),
+                    '--identifier='.$this->option('identifier'),
+                ]);
+                $p->setTimeout(null);
+                $p->start();
+                $running[$id] = $p;
+            }
+            foreach ($running as $id => $p) {
+                if (!$p->isRunning()) {
+                    $this->line($p->getOutput());
+                    unset($running[$id]);
+                }
+            }
+            usleep(200000);
+        }
     }
 
     public function executeFetch($mailbox, $debug)
