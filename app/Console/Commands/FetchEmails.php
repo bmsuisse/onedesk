@@ -354,10 +354,10 @@ class FetchEmails extends Command
             //      to fetch an empty UID list.
             // Webklex Query::limit()/forPage() are 1-indexed, so pages start at 1.
             //
-            // NOTE: this assumes a stable search set across pages (fetch_unseen=0). With
-            // fetch_unseen=1, processMessage() marks messages \Seen mid-loop, shrinking
-            // the unseen set between pages and shifting forPage() — a separate,
-            // pre-existing drift (#4047), not addressed here.
+            // NOTE: with fetch_unseen=1, processMessage() marks messages \Seen mid-loop,
+            // shrinking the unseen set between pages (#4047), so page N would skip mails.
+            // For unseen we always request page 1 (the remaining unseen mails) and stop
+            // on an empty page. The loop stays bounded by $total_pages.
             try {
                 $count_query = $folder->query()->since(now()->subDays($this->option('days')))->leaveUnread();
                 if ($unseen) {
@@ -389,7 +389,7 @@ class FetchEmails extends Command
                     if ($no_charset) {
                         $messages_query->setCharset(null);
                     }
-                    $messages_query->limit($page_size, $page);
+                    $messages_query->limit($page_size, $unseen ? 1 : $page);
 
                     $messages = $messages_query->get();
 
@@ -423,6 +423,11 @@ class FetchEmails extends Command
                 }
 
                 $this->line('['.date('Y-m-d H:i:s').'] Fetched: '.count($messages));
+
+                // Unseen set is exhausted (mails were marked \Seen on previous pages).
+                if ($unseen && !count($messages)) {
+                    break;
+                }
 
                 $message_index = 1;
 
