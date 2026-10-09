@@ -1183,7 +1183,13 @@ class FetchEmails extends Command
                 $this->logError('Error occurred processing message');
             }
         } catch (\Exception $e) {
-            $this->setSeen($message, $mailbox);
+            // Transient DB errors (deadlock, lost connection) must not mark the mail Seen: it is retried on the next run.
+            // Duplicate entry (1062) and non-DB errors are deterministic, keep marking Seen.
+            $transient_db_error = $e instanceof \Illuminate\Database\QueryException
+                && (int) ($e->errorInfo[1] ?? 0) !== 1062;
+            if (!$transient_db_error) {
+                $this->setSeen($message, $mailbox);
+            }
             $this->logError(\Helper::formatException($e));
         }
     }
