@@ -16,6 +16,13 @@ $atts = DB::table('attachments')->count();
 foreach (['conversations' => $convs, 'threads' => $threads, 'customers' => $custs, 'attachments' => $atts] as $k => $got) {
     if ($got !== $exp[$k]) $fail[] = "$k $got != expected {$exp[$k]}";
 }
+// Reply-To wins over From as the conversation's sender (processMessage); the generator counts the tickets that carry one.
+$replyTo = DB::table('threads')->where('first', 1)->where('from', 'like', '%@replyto.example')->count();
+if (isset($exp['reply_to_conversations']) && $replyTo !== $exp['reply_to_conversations']) $fail[] = "reply-to conversations $replyTo != expected {$exp['reply_to_conversations']}";
+$upper = DB::table('emails')->whereRaw('BINARY email != LOWER(email)')->count();
+if ($upper) $fail[] = "$upper customer emails not lower-cased";
+$emptyConv = DB::table('conversations')->whereNotIn('id', DB::table('threads')->select('conversation_id'))->count();
+if ($emptyConv) $fail[] = "$emptyConv conversations without threads";
 if ($dupMsg) $fail[] = "$dupMsg duplicated message_id values in threads";
 if ($dupMail) $fail[] = "$dupMail duplicated customer emails";
 if ($orphans) $fail[] = "$orphans conversations without customer";
