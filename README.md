@@ -1,3 +1,9 @@
+# OneDesk
+
+> **OneDesk is a fork of [FreeScout](https://github.com/freescout-help-desk/freescout)** maintained by [BMS Suisse](https://github.com/bmsuisse). It is licensed under the [AGPL-3.0](LICENSE), like the original. FreeScout is copyright of its respective authors. Changes in this fork: parallel mailbox fetching (`APP_FETCH_PARALLEL`) and bug fixes. See the git history for details.
+
+---
+
 # Free Self-Hosted Zendesk & Help Scout Alternative
 
 <div align="center">
