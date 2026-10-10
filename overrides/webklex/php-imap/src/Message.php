@@ -164,6 +164,9 @@ class Message {
 
     public $tmp_raw_body;
 
+    /** Collection key (Message-ID) set by Query::populate() before it is made unique per UID. */
+    public $tmp_message_key;
+
     /**
      * A list of all available and supported flags
      *

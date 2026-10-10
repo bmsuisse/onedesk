@@ -415,6 +415,12 @@ class Query {
                         $key = \MailHelper::generateMessageId($from, $message->tmp_raw_body.$uid);
                     }
                 }
+                // Mails sharing a Message-ID in one bunch are separate mails (the app imports both): never overwrite one with the other.
+                // The caller needs the plain key as Message-ID, so remember it before making the collection key unique.
+                $message->tmp_message_key = "$key";
+                if ($messages->has("$key")) {
+                    $key = "$key#$uid";
+                }
                 $messages->put("$key", $message);
             }
             $msglist++;

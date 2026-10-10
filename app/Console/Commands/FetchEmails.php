@@ -458,9 +458,11 @@ class FetchEmails extends Command
                     // otherwise the whole bunch stays in memory until the end of it.
                     $pending = $messages->all();
                     unset($messages);
-                    foreach (array_keys($pending) as $message_id) {
-                        $message = $pending[$message_id];
-                        unset($pending[$message_id]);
+                    foreach (array_keys($pending) as $pending_key) {
+                        $message = $pending[$pending_key];
+                        unset($pending[$pending_key]);
+                        // The collection key is unique per UID, the Message-ID may repeat within a bunch.
+                        $message_id = $message->tmp_message_key ?? $pending_key;
 
                         // Bodies are parsed one by one (Query::lazyParse), so only one parsed mail is in memory.
                         try {
