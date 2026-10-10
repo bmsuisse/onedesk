@@ -80,6 +80,9 @@ class Attachment extends Model
         // Add underscore to the extension if file has restricted extension.
         $file_name = \Helper::sanitizeUploadedFileName($file_name, $uploaded_file, $content, $mime_type, $upload_mode);
 
+        // Control characters (NUL, newlines...) make the disk write fail on every run: the mail would be retried forever.
+        $file_name = preg_replace('/[\x00-\x1F\x7F]/', '', $file_name);
+
         // Replace some symbols in file name.
         // Gmail can not load image if it contains spaces.
         $file_name = preg_replace('/[ #\/]/', '_', $file_name);
