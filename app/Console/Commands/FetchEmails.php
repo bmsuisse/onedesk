@@ -1072,7 +1072,8 @@ class FetchEmails extends Command
             } else {
                 $is_html = false;
                 $body = $message->getTextBody() ?? '';
-                $body = htmlspecialchars($body);
+                // Invalid UTF-8 (mislabelled 8-bit text) would make htmlspecialchars() return ''.
+                $body = htmlspecialchars(\Helper::utf8Encode($body), ENT_COMPAT | ENT_SUBSTITUTE, 'UTF-8');
             }
             $body = \Helper::utf8Encode($body);
 

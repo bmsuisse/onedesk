@@ -84,8 +84,8 @@ if (!empty($exp['malformed_counts'])) {
     foreach ($exp['malformed_counts'] as $kind => $n) {
         if ($seen[$kind] !== $n) $fail[] = "malformed kind '$kind': $seen[$kind] conversations != expected $n";
     }
-    // Message::decodeString() strips NUL bytes (#5292): none may reach the stored bodies.
-    $nul = DB::table('threads')->whereRaw('LOCATE(CHAR(0), body) > 0')->count();
+    // Message::decodeString() strips NUL bytes (#5292): none may reach the stored bodies (BINARY: under utf8mb4_unicode_ci LOCATE() also matches ignorable control chars such as 0x1d).
+    $nul = DB::table('threads')->whereRaw('LOCATE(CHAR(0), CAST(body AS BINARY)) > 0')->count();
     if ($nul) $fail[] = "$nul thread bodies contain NUL bytes";
 }
 // V>=8 theme (one mail to several mailboxes, same sender in all mailboxes): per fan-out marker FAN-<i>-<j> and mailbox, conversations and threads (a reply joins the
@@ -220,6 +220,9 @@ if (!empty($exp['t12_kinds'])) {
         if ($g !== $e) $badm[] = $marker.' got '.json_encode($g, JSON_UNESCAPED_UNICODE).' != '.json_encode($e, JSON_UNESCAPED_UNICODE);
     }
     if ($badm) { $bad[] = count($badm).' of '.count($exp['t12_convs']).' t12 markers wrong [mailbox, customer_email, subject] (e.g. '.implode(' | ', array_slice($badm, 0, 3)).')'; fwrite(STDERR, "t12 detail:\n  ".implode("\n  ", $badm)."\n"); }
+    foreach ($exp['t12_bodies'] ?? [] as $tok) {
+        if (DB::table('threads')->where('body', 'like', '%'.$tok.'%')->count() !== 1) $bad[] = "body with $tok missing (invalid UTF-8 body imported empty?)";
+    }
     if ($bad) $fail[] = 'unusual senders: '.implode('; ', $bad);
 }
 // Two-phase case agentreply: agents answered notifications by email. Replies with a valid hash become message threads (created_by_user_id = the agent) of the conversation they replied to,

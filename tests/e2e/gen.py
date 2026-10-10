@@ -971,9 +971,11 @@ def theme11(i, j, u, room, put, tickets, extras):
 #   emoji     320+ character subject with emoji (RFC 2047 folded over several lines), display name with emoji
 #   rtl       Hebrew / Arabic display name and subject (RFC 2047), RTL body
 #   varreply  reply (In-Reply-To of a ticket) from the UPPER-CASE spelling (same customer) or from a plus-variant (new customer): +1 thread
+#   latin1    text/plain labelled us-ascii but carrying 8-bit latin1 bytes (invalid UTF-8): the body must still be imported (marker "T12B-<i>-<j>" in it), not come out empty
 #   ccvar     one ticket with To = mailbox and Cc listing 3-5 spellings of the same two people (case and plus variants): one conversation, one customer per distinct sanitized address
-T12 = {"plusvar": 16, "noname": 14, "idn": 12, "upper": 10, "longsubj": 10, "emoji": 9, "rtl": 8, "varreply": 12, "ccvar": 9}
+T12 = {"plusvar": 16, "noname": 14, "idn": 12, "upper": 10, "longsubj": 10, "emoji": 9, "rtl": 8, "varreply": 12, "ccvar": 9, "latin1": 8}
 t12 = {}             # kind -> [conversations, threads] a correct import creates
+t12_bodies = []      # markers that must appear in an imported thread body
 t12_convs = {}       # marker -> [[mailbox, customer_email, subject], ...] of the conversations it opens
 def w12(lo, hi): return " ".join(rnd12.choice(WORDS) for _ in range(rnd12.randint(lo, hi)))
 def t12acct(kind, convs, threads):
@@ -1053,6 +1055,15 @@ def theme12(i, j, u, room, write, tickets):
         subj = f"{rnd12.choice(WORDS)} {marker}"
         write(mk("cv", ts, frm, u, subj, ["Cc: " + ", ".join(cc)]), ts)
         note(frm, u, *cc); t12conv(marker, u, cust, subj); t12acct(kind, 1, 1)
+        return 1
+    if kind == "latin1":
+        a = base12()
+        frm = f"Customer {a.split('@')[0]} <{a}>"
+        subj = f"{rnd12.choice(WORDS)} {marker}"
+        body = f"T12B-{i}-{j} gr\udcfc\udcdfe caf\udce9 " + w12(8, 40)   # surrogateescape writes the raw bytes FC DF E9
+        write(m_text(m_hdr(xk, f"<t12-l1{i}-{j}@gen.test>", ts, frm, u, subj), body + "\n", "text/plain; charset=us-ascii", "8bit"), ts)
+        t12_bodies.append(f"T12B-{i}-{j}")
+        note(frm, u); t12conv(marker, u, a, subj); t12acct(kind, 1, 1)
         return 1
     if kind == "longsubj":
         a = base12()
@@ -1224,7 +1235,7 @@ if V >= 8: exp.update(exp8, fan_groups=fan_groups, fan_kinds=fan_kinds, burst_se
 if V >= 9: exp.update(machine_kinds=mach, list_groups=list_groups)
 if V >= 10: exp.update(t10_kinds=t10, t10_convs={k: sorted(v) for k, v in t10_convs.items()})
 if V >= 11: exp.update(t11_kinds=t11, t11_flags=t11_flags, t11_mails=t11_mails)
-if V >= 12: exp.update(t12_kinds=t12, t12_convs={k: sorted(v) for k, v in t12_convs.items()})
+if V >= 12: exp.update(t12_kinds=t12, t12_convs={k: sorted(v) for k, v in t12_convs.items()}, t12_bodies=t12_bodies)
 if V >= 6: exp.update(exp6, long_thread_sizes=sorted(long_sizes, reverse=True), min_huge_len=min(huge_lens) if huge_lens else 0, quote_checks=quote_checks)
 open(os.path.join(os.path.dirname(OUT), "users"), "w").write("".join(f"{u}:{{PLAIN}}pw::::::\n" for u in users))
 json.dump(exp, open(os.path.join(os.path.dirname(OUT), "expected.json"), "w"))
