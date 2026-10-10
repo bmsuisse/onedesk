@@ -364,7 +364,11 @@ class Mailbox extends Model
         if ($main_folders) {
             return $main_folders;
         }
-        
+
+        if ($this->relationLoaded('main_folders')) {
+            return $this->getRelation('main_folders');
+        }
+
         return $this->folders()
             ->where(function ($query) {
                 $query->whereIn('type', [Folder::TYPE_UNASSIGNED, Folder::TYPE_ASSIGNED, Folder::TYPE_DRAFTS])
@@ -379,6 +383,39 @@ class Mailbox extends Model
             })
             ->orderBy('type')
             ->get();
+    }
+
+    /**
+     * Load main folders of several mailboxes with one query (see getMainFolders()).
+     * Also batches "waiting since" of their folders.
+     */
+    public static function preloadMainFolders($mailboxes)
+    {
+        $mailboxes = collect($mailboxes)->filter();
+        if ($mailboxes->isEmpty()) {
+            return;
+        }
+        $user_id = auth()->user()->id;
+
+        $folders = Folder::whereIn('mailbox_id', $mailboxes->pluck('id'))
+            ->where(function ($query) use ($user_id) {
+                $query->whereIn('type', [Folder::TYPE_UNASSIGNED, Folder::TYPE_ASSIGNED, Folder::TYPE_DRAFTS])
+                    ->orWhere(function ($query2) use ($user_id) {
+                        $query2->where(['type' => Folder::TYPE_MINE, 'user_id' => $user_id]);
+                    })
+                    ->orWhere(function ($query3) use ($user_id) {
+                        $query3->where(['type' => Folder::TYPE_STARRED, 'user_id' => $user_id]);
+                    });
+            })
+            ->orderBy('type')
+            ->get();
+
+        $by_mailbox = $folders->groupBy('mailbox_id');
+        foreach ($mailboxes as $mailbox) {
+            $mailbox->setRelation('main_folders', $by_mailbox->get($mailbox->id, new \Illuminate\Database\Eloquent\Collection()));
+        }
+
+        Folder::preloadWaitingSince($folders);
     }
 
     /**
