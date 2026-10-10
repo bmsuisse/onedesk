@@ -505,6 +505,32 @@ class FetchEmails extends Command
         }
     }
 
+    // Other active mailboxes addressed in To/Cc/Bcc of the message: they get their own copy.
+    public function getExtraMailboxes($message, $mailbox, $mailboxes)
+    {
+        $extra_mailboxes = [];
+        $recipient_emails = array_unique($this->formatEmailList(array_merge(
+            $this->attrToArray($message->getTo()), 
+            $this->attrToArray($message->getCc()), 
+            // It will always return an empty value as it's Bcc.
+            $this->attrToArray($message->getBcc())
+        )));
+
+        if (count($mailboxes) && count($recipient_emails) > 1) {
+            foreach ($mailboxes as $check_mailbox) {
+                if ($check_mailbox->id == $mailbox->id || !$check_mailbox->isInActive()) {
+                    continue;
+                }
+                // No need to check mailbox aliases.
+                if (in_array(\App\Email::sanitizeEmail($check_mailbox->email), $recipient_emails)) {
+                    $extra_mailboxes[] = $check_mailbox;
+                }
+            }
+        }
+
+        return $extra_mailboxes;
+    }
+
     public function processMessage($message, $message_id, $mailbox, $mailboxes, $extra = false, $attempt = 1)
     {
         try {
@@ -611,7 +637,23 @@ class FetchEmails extends Command
             // Check if message already fetched.
             if ($duplicate_message_id) {
                 $this->line('['.date('Y-m-d H:i:s').'] Message with such Message-ID has been fetched before: '.$message_id);
-                $this->setSeen($message, $mailbox);
+
+                // The original import may have been interrupted or a copy may have failed before the mail was marked as Seen:
+                // retry the copies for other mailboxes (idempotent thanks to the artificial Message-ID).
+                $all_copies_done = true;
+                if (!$extra && !$new_email_with_same_message_id && $duplicate_message_id->type == Thread::TYPE_CUSTOMER
+                    && $duplicate_message_id->conversation
+                    && $duplicate_message_id->conversation->mailbox_id == $mailbox->id
+                ) {
+                    foreach ($this->getExtraMailboxes($message, $mailbox, $mailboxes) as $extra_mailbox) {
+                        if ($this->processMessage($message, $message_id, $extra_mailbox, [], true) === false) {
+                            $all_copies_done = false;
+                        }
+                    }
+                }
+                if ($all_copies_done) {
+                    $this->setSeen($message, $mailbox);
+                }
                 return;
             }
 
@@ -1131,30 +1173,9 @@ class FetchEmails extends Command
                 
                 // Maybe this email need to be imported also into other mailbox.
 
-                $recipient_emails = array_unique($this->formatEmailList(array_merge(
-                    $this->attrToArray($message->getTo()), 
-                    $this->attrToArray($message->getCc()), 
-                    // It will always return an empty value as it's Bcc.
-                    $this->attrToArray($message->getBcc())
-                )));
-                
                 // An extra import never fans out further, the original import does it.
-                if (!$extra && count($mailboxes) && count($recipient_emails) > 1) {
-                    foreach ($mailboxes as $check_mailbox) {
-                        if ($check_mailbox->id == $mailbox->id) {
-                            continue;
-                        }
-                        if (!$check_mailbox->isInActive()) {
-                            continue;
-                        }
-                        foreach ($recipient_emails as $recipient_email) {
-                            // No need to check mailbox aliases.
-                            if (\App\Email::sanitizeEmail($check_mailbox->email) == $recipient_email) {
-                                $extra_mailboxes[] = $check_mailbox;
-                                break;
-                            }
-                        }
-                    }
+                if (!$extra) {
+                    $extra_mailboxes = $this->getExtraMailboxes($message, $mailbox, $mailboxes);
                 }
                 //}
 
