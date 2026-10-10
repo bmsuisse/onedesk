@@ -1208,11 +1208,19 @@ class FetchEmails extends Command
             if ($new_thread) {
                 // Import copies for other mailboxes before the message is marked as Seen,
                 // so that an interrupted run retries them instead of losing them.
+                // A copy that failed transiently (false) keeps the mail unseen, the next run imports only the missing copy.
+                $all_copies_done = true;
                 foreach ($extra_mailboxes as $extra_mailbox) {
-                    $this->processMessage($message, $message_id, $extra_mailbox, [], true);
+                    if ($this->processMessage($message, $message_id, $extra_mailbox, [], true) === false) {
+                        $all_copies_done = false;
+                    }
                 }
 
-                $this->setSeen($message, $mailbox);
+                if ($all_copies_done) {
+                    $this->setSeen($message, $mailbox);
+                } else {
+                    $this->logError('Copy for another mailbox failed, message kept unseen to retry on the next run');
+                }
                 $this->line('['.date('Y-m-d H:i:s').'] Thread successfully created: '.$new_thread->id);
 
                 // If it was a bounce message, save bounce data.
@@ -1247,6 +1255,9 @@ class FetchEmails extends Command
                 $this->setSeen($message, $mailbox);
             }
             $this->logError(\Helper::formatException($e));
+
+            // false = transient failure, the message stays unseen (processMessage() of an extra copy reports it to the caller).
+            return !$transient_db_error;
         }
     }
 
