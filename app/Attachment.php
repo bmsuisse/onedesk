@@ -148,26 +148,23 @@ class Attachment extends Model
     public static function saveFileToDisk($attachment, $file_name, $content, $uploaded_file)
     {
         // Save file from content or copy file.
-        // We have to keep file name as is, so if file exists we create extra folder.
-        // Examples: 1/2/3
-        $file_dir = self::generatePath($attachment->id);
-
-        $i = 0;
-        do {
-            $i++;
-            $file_path = self::DIRECTORY.DIRECTORY_SEPARATOR.$file_dir.$i.DIRECTORY_SEPARATOR.$file_name;
-        } while (self::getDisk()->exists($file_path));
-
-        $file_dir .= $i.DIRECTORY_SEPARATOR;
+        // We have to keep file name as is, so every attachment gets its own folder (the id is unique,
+        // an exists() check followed by put() is not atomic for parallel fetchers). Examples: 1/2/3
+        $file_dir = self::generatePath($attachment->id).$attachment->id.DIRECTORY_SEPARATOR;
+        $file_path = self::DIRECTORY.DIRECTORY_SEPARATOR.$file_dir.$file_name;
 
         try {
             if ($uploaded_file) {
-                $uploaded_file->storeAs(self::DIRECTORY.DIRECTORY_SEPARATOR.$file_dir, $file_name, self::getDiskName());
+                $stored = $uploaded_file->storeAs(self::DIRECTORY.DIRECTORY_SEPARATOR.$file_dir, $file_name, self::getDiskName());
             } else {
-                self::getDisk()->put($file_path, $content);
+                $stored = self::getDisk()->put($file_path, $content);
+            }
+            if ($stored === false) {
+                throw new \RuntimeException('Could not write '.$file_path);
             }
         } catch (\Exception $e) {
             \Helper::logException($e, '[Attachment::saveFileToDisk()]');
+            throw new AttachmentWriteException($e->getMessage(), 0, $e);
         }
 
         // $content may be a stream resource rather than a string; the SVG sanitizer needs

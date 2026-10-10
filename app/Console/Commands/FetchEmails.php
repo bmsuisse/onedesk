@@ -1242,7 +1242,8 @@ class FetchEmails extends Command
                 usleep(random_int(50, 250) * 1000);
                 return $this->processMessage($message, $message_id, $mailbox, $mailboxes, $extra, $attempt + 1);
             }
-            $transient_db_error = $e instanceof \Illuminate\Database\QueryException
+            $transient_db_error = $e instanceof \App\AttachmentWriteException
+                || $e instanceof \Illuminate\Database\QueryException
                 && (in_array((int) ($e->errorInfo[1] ?? 0), [1205, 1213, 2006, 2013], true)
                     || ($e->errorInfo[0] ?? '') === '40001'
                     // Another mailbox imported the same Message-ID at the same moment (parallel fetch) and won the race:
