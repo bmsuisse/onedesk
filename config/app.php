@@ -220,7 +220,7 @@ return [
     */
     'fetch_schedule'    => env('APP_FETCH_SCHEDULE', 1),
     'fetch_unseen'      => env('APP_FETCH_UNSEEN', 1),
-    'fetch_parallel'    => env('APP_FETCH_PARALLEL', 1), // mailboxes fetched at once
+    'fetch_parallel'    => env('APP_FETCH_PARALLEL', 4), // mailboxes fetched at once
     'fetch_max_execution_time' => env('APP_FETCH_MAX_EXECUTION_TIME', 30), // minutes
 
     /*

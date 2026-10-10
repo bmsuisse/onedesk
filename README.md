@@ -4,7 +4,7 @@
 
 ## What OneDesk improves (mail fetching)
 
-- **Parallel fetching:** `APP_FETCH_PARALLEL=4` (default `1`, off) fetches one mailbox per child process, N at a time. No global sleep ramp in this mode. E2E: 1,730 mails across 20 mailboxes in ~21 s.
+- **Parallel fetching, on by default:** one child process per mailbox, 4 at a time (`APP_FETCH_PARALLEL=4`; set `1` to fetch sequentially). No global sleep ramp in this mode. E2E: 1,730 mails across 20 mailboxes in ~21 s.
 - **Less work per mail:** about half the DB queries per imported mail (38.7 down to roughly 18-23), lazy parsing of message bodies, bunch-wise processing with lower memory use.
 - **Mail is no longer lost or duplicated**, among others:
   - unseen paging drift that skipped mails
