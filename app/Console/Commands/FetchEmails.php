@@ -214,7 +214,8 @@ class FetchEmails extends Command
     }
 
     // ponytail: busy-poll pool, no per-mailbox retry; a mail sent to several
-    // mailboxes may race across children (duplicate-entry guard already covers it).
+    // mailboxes may race across children: the loser hits 1062 on threads.message_id, keeps the mail
+    // unseen and imports its own copy on the next run (see processMessage catch).
     protected function fetchParallel(array $ids, int $parallel)
     {
         $queue = $ids;
@@ -1231,7 +1232,9 @@ class FetchEmails extends Command
                     // Another mailbox imported the same Message-ID at the same moment (parallel fetch) and won the race:
                     // keep the mail unseen, the next run finds its thread and imports this mailbox's own copy.
                     // An extra import hitting its own artificial Message-ID already has its copy.
-                    || (!$extra && (int) ($e->errorInfo[1] ?? 0) === 1062));
+                    // Only the threads.message_id key counts, other unique keys are deterministic.
+                    || (!$extra && (int) ($e->errorInfo[1] ?? 0) === 1062
+                        && strpos((string) ($e->errorInfo[2] ?? ''), 'threads_message_id_index') !== false));
             if (!$transient_db_error) {
                 $this->setSeen($message, $mailbox);
             }
