@@ -87,6 +87,42 @@ if (!empty($exp['malformed_counts'])) {
     $nul = DB::table('threads')->whereRaw('LOCATE(CHAR(0), body) > 0')->count();
     if ($nul) $fail[] = "$nul thread bodies contain NUL bytes";
 }
+// V>=8 theme (one mail to several mailboxes, same sender in all mailboxes): per fan-out marker FAN-<i>-<j> and mailbox, conversations and threads (a reply joins the
+// conversation of ITS mailbox; a mailbox only cc'd on the reply opens a new "Re:" conversation), see gen.py. Whatever mailbox fetched first, the result must be the same.
+if (!empty($exp['fan_groups'])) {
+    $got = [];
+    $convRows = DB::table('conversations')->join('mailboxes', 'mailboxes.id', '=', 'conversations.mailbox_id')->where('conversations.subject', 'like', '%FAN-%')
+        ->select('conversations.id', 'conversations.subject', 'mailboxes.email')->get();
+    $tcount = [];
+    foreach (array_chunk($convRows->pluck('id')->all(), 500) as $ids) {
+        $tcount += DB::table('threads')->whereIn('conversation_id', $ids)->select('conversation_id', DB::raw('count(*) as c'))->groupBy('conversation_id')->pluck('c', 'conversation_id')->all();
+    }
+    foreach ($convRows as $r) {
+        if (!preg_match('/FAN-(\d+-\d+)/', $r->subject, $m)) continue;
+        $e = &$got['FAN-'.$m[1]][$r->email]; $e = $e ?: [0, 0]; $e[0]++; $e[1] += (int) ($tcount[$r->id] ?? 0); unset($e);
+    }
+    $bad = [];
+    foreach ($exp['fan_groups'] as $marker => $boxes) {
+        $g = $got[$marker] ?? []; ksort($g); ksort($boxes);
+        if ($g !== $boxes) {
+            $diff = [];
+            foreach ($boxes + $g as $mb => $_) { if (($g[$mb] ?? [0, 0]) !== ($boxes[$mb] ?? [0, 0])) $diff[] = str_replace('@test.local', '', $mb).' '.json_encode($g[$mb] ?? [0, 0]).' != '.json_encode($boxes[$mb] ?? [0, 0]); }
+            $bad[] = "$marker (".($exp['fan_kinds'][$marker] ?? '?')."): ".implode(', ', array_slice($diff, 0, 4));
+        }
+    }
+    if ($bad) $fail[] = count($bad).' of '.count($exp['fan_groups']).' fan-out groups wrong [mailbox [convs,threads] got != expected] (e.g. '.implode(' | ', array_slice($bad, 0, 3)).')';
+    if ($bad) fwrite(STDERR, "fan-out detail:\n  ".implode("\n  ", $bad)."\n");
+}
+// Bulk senders write one mail into every mailbox: one customer each, one conversation per mailbox.
+if (!empty($exp['burst_senders'])) {
+    $gotB = DB::table('conversations')->join('emails', 'emails.customer_id', '=', 'conversations.customer_id')->where('emails.email', 'like', 'bulk%@bulk.example')
+        ->select('emails.email', DB::raw('count(*) as c'))->groupBy('emails.email')->pluck('c', 'emails.email')->all();
+    foreach ($exp['burst_senders'] as $addr => $n) {
+        if ((int) ($gotB[$addr] ?? 0) !== $n) $fail[] = "bulk sender $addr has ".(int) ($gotB[$addr] ?? 0)." conversations != expected $n";
+        $c = DB::table('emails')->where('email', $addr)->count();
+        if ($c !== 1) $fail[] = "bulk sender $addr has $c customer emails != 1";
+    }
+}
 if ($dupMsg) $fail[] = "$dupMsg duplicated message_id values in threads";
 if ($dupMail) $fail[] = "$dupMail duplicated customer emails";
 if ($orphans) $fail[] = "$orphans conversations without customer";

@@ -17,6 +17,7 @@ rnd4 = random.Random(SEED + 1000)  # theme "recipients" (V>=4) draws only from t
 rnd5 = random.Random(SEED + 2000)  # theme "attachments" (V>=5) draws only from this one
 rnd6 = random.Random(SEED + 3000)  # theme "long threads / huge bodies / quotes" (V>=6) draws only from this one
 rnd7 = random.Random(SEED + 4000)  # theme "malformed MIME" (V>=7) draws only from this one
+rnd8 = random.Random(SEED + 5000)  # theme "one mail to several mailboxes / same sender in all mailboxes" (V>=8) draws only from this one
 WORDS = "invoice order delivery refund login password account billing shipping error crash update contact support".split()
 SUBJECTS_NONASCII = ["Rechnung für Bestellung", "Réclamation commande", "Wiederholte Störung — bitte prüfen", "注文について"]
 os.makedirs(OUT, exist_ok=True)
@@ -342,6 +343,91 @@ def build(mid, frm, to, subject, ts, in_reply_to=None, kind="plain", with_att=Fa
     out += f'--{b}\nContent-Type: application/octet-stream; name="doc.bin"\nContent-Transfer-Encoding: base64\nContent-Disposition: attachment; filename="doc.bin"\n\n{b64(rbytes(att_size()))}\n'
     return out + f"--{b}--\n"
 
+# V>=8 theme: one mail delivered to SEVERAL mailboxes (same Message-ID, extra_import path) and one sender writing to ALL mailboxes at the same moment.
+# Fan-out ticket (marker "FAN-<i>-<j>" in the subject), delivered to K = 2..5 mailboxes (the first one is the one being generated, the others get a copy
+# through pending), in one of three header styles: "all" (every target in To/Cc), "bcc" (headers list only mailbox i, the rest are Bcc) and
+# "bccfirst" (headers list one LATER mailbox only, mailbox i is Bcc). processMessage() imports it once per target mailbox, whatever mailbox fetches it
+# first: the first fetch imports it under its own Message-ID and, for every OTHER mailbox listed in To/Cc, an extra copy under the artificial id
+# generateMessageId(mid, mailbox_id.mid); a Bcc mailbox sees a duplicate it is not a recipient of, sets extra=true and imports its own copy.
+# So: K conversations, K threads, attachments x K. Replies to an "all" ticket (customer reply-all, In-Reply-To = ticket):
+#   same    delivered to the same K mailboxes: each joins the conversation of ITS mailbox (prev thread of another mailbox -> the artificial-id lookup) -> +K threads
+#   subset  delivered to some of them (always incl. mailbox i): +|subset| threads, no new conversation
+#   latecc  customer adds one more mailbox X to the copy: X has no earlier thread -> prev_thread reset (#5350) -> new conversation "Re: ..." in X: +1 conversation
+# check.php compares per marker and mailbox the number of conversations and threads (fan_groups).
+# Broadcast: one notice listing ALL mailboxes in To/Cc (style "all", no reply). Burst senders: the same bulkN@bulk.example writes one distinct mail
+# (own Message-ID, dates a few seconds apart) into every mailbox: parallel fetchers create the same customer at the same moment -> one customer, N conversations.
+fan_groups, burst_exp, fan_kinds = {}, {}, {}   # fan_kinds: marker -> "style/reply kind", only printed by check.php to name what failed
+exp8 = {"fanout_tickets": 0, "fanout_replies": 0, "broadcasts": 0, "burst_mails": 0}
+def pool8(): return f"cust{rnd8.randint(1, 300)}@example.org" if rnd8.random() < .7 else f"colleague{rnd8.randint(1, 80)}@partner.example"
+def fan_rcpt(ids, with_customers=True):
+    """-> (To, extra headers) listing the mailboxes ids; sometimes all in To, sometimes first in To and the rest in Cc, sometimes a customer copy"""
+    addrs_ = [f"mb{x}@test.local" for x in ids]
+    if with_customers and rnd8.random() < .3: addrs_.insert(rnd8.randint(0, len(addrs_)), pool8())
+    if rnd8.random() < .5 or len(addrs_) == 1: return ", ".join(addrs_), []
+    return addrs_[0], ["Cc: " + ", ".join(addrs_[1:])]
+def fanout(i, j, room, write, broadcast=False):
+    """ticket (+ maybe a reply) written into mailbox i and queued for the other targets; -> slots used in mailbox i, 0 if it does not fit"""
+    global ATT_N
+    cap = max(1, M // 10)
+    if broadcast:
+        S, style, rk = list(range(i, N + 1)), "all", "none"
+        if any(len(pending.get(x, [])) + 1 > cap for x in S[1:]): return 0
+    else:
+        later = [x for x in range(i + 1, N + 1) if len(pending.get(x, [])) + 2 <= cap]
+        if not later: return 0
+        S = [i] + sorted(rnd8.sample(later, min(rnd8.choice([1, 2, 2, 3, 4]), len(later))))
+        style = rnd8.choice(["all"] * 3 + ["bcc", "bccfirst"])
+        rk = rnd8.choice(["none"] * 4 + ["same"] * 3 + ["subset", "latecc"]) if style == "all" else "none"
+        if style == "bccfirst" and len(S) < 2: style = "bcc"
+    D = S
+    if rk == "subset": D = [i] + [x for x in S[1:] if rnd8.random() < .5]
+    if rk == "latecc":
+        X = [x for x in range(i + 1, N + 1) if x not in S and len(pending.get(x, [])) + 1 <= cap]
+        if X: D = S + [rnd8.choice(X)]
+        else: rk = "same"
+    if room < (2 if rk != "none" else 1): return 0
+    now = time.time()
+    ts = now - rnd8.randint(1200, 3 * 86400)
+    cust = f"cust{rnd8.randint(1, 300)}@example.org"
+    frm = f"Customer {cust.split('@')[0]} <{cust}>"
+    marker = f"FAN-{i}-{j}"
+    subj = f"{rnd8.choice(WORDS)} {marker}"
+    listed = S if style == "all" else [i] if style == "bcc" else [rnd8.choice(S[1:])]
+    to, extra = fan_rcpt(listed)
+    mid = f"<fan{i}-{j}@gen.test>"
+    att = rnd8.random() < .15
+    raw = build(mid, frm, to, subj, ts, with_att=att, extra=extra)
+    n_att, sz = ATT_N, list(ATT_SIZES)
+    note(frm, to, *[x[4:] for x in extra])
+    write(raw, ts)
+    for x in S[1:]: pending.setdefault(x, []).append((raw, ts))
+    fan_kinds[marker] = ("broadcast" if broadcast else style) + "/" + rk
+    g = fan_groups[marker] = {f"mb{x}@test.local": [1, 1] for x in S}
+    exp["conversations"] += len(S); exp["threads"] += len(S); exp["attachments"] += n_att * len(S); att_sizes.extend(sz * len(S))
+    exp8["broadcasts" if broadcast else "fanout_tickets"] += 1
+    used = 1
+    if rk != "none":
+        ts2 = ts + rnd8.randint(1, max(1, int(now - ts)))
+        to2, extra2 = fan_rcpt(D)
+        att2 = rnd8.random() < .1
+        raw2 = build(f"<fanr{i}-{j}@gen.test>", frm, to2, "Re: " + subj, ts2, in_reply_to=mid, with_att=att2, extra=extra2)
+        note(frm, to2, *[x[4:] for x in extra2])
+        write(raw2, ts2); used = 2
+        for x in D[1:]: pending.setdefault(x, []).append((raw2, ts2))
+        for x in D:
+            e = g.setdefault(f"mb{x}@test.local", [0, 0])
+            if x not in S: e[0] += 1; exp["conversations"] += 1
+            e[1] += 1
+        exp["threads"] += len(D); exp["attachments"] += ATT_N * len(D); att_sizes.extend(list(ATT_SIZES) * len(D))
+        exp8["fanout_replies"] += 1
+    return used
+# one bulk sender per ~40 mails; the dates are shared by all mailboxes (a few seconds apart), so mailboxes fetched in parallel meet the sender at the same time
+bursts = []
+if V >= 8 and N >= 2:
+    for b in range(1, max(1, M // 40) + 1):
+        bursts.append((f"bulk{b}@bulk.example", time.time() - rnd8.randint(900, 3 * 86400)))
+        burst_exp[bursts[-1][0]] = 0
+
 for i in range(1, N + 1):
     u = f"mb{i}@test.local"; users.append(u)
     d = f"{OUT}/{u}/Maildir"
@@ -359,17 +445,31 @@ for i in range(1, N + 1):
         return f"cust{rnd4.randint(1, 300)}@example.org" if rnd4.random() < .7 else f"colleague{rnd4.randint(1, 80)}@partner.example"
     def pool_list(lo, hi):
         return [person(pool_addr(), rnd4.random() < .2) for _ in range(rnd4.randint(lo, hi))]
+    bq = list(bursts) if V >= 8 else []        # V>=8: bulk senders still to write into this mailbox
+    bcast = [M // 4, M // 2][:(2 if M >= 100 else 1)] if V >= 8 and i == 1 and N >= 4 and M >= 40 else []
     while j < M:
-        if V >= 4 and pending.get(i) and (len(pending[i]) >= M - j or rnd4.random() < .1):   # copy of a mail that also went to this mailbox
+        if V >= 4 and pending.get(i) and (len(pending[i]) + len(bq) >= M - j or rnd4.random() < .1):   # copy of a mail that also went to this mailbox
             raw, pts = pending[i].pop(0)
             write(raw, pts); j += 1
             continue
         if plan and j >= plan[0]:
-            K = min(plan[1], M - j - 1 - len(pending.get(i, [])))
+            K = min(plan[1], M - j - 1 - len(pending.get(i, [])) - len(bq))
             plan = None
             if K >= 5:
                 j += long_thread(i, j, u, K, write)
                 continue
+        if bq and (len(pending.get(i, [])) + len(bq) >= M - j or rnd8.random() < len(bq) / (M - j)):
+            addr, bts = bq.pop(0)
+            ts = bts + rnd8.randint(0, 5)
+            frm = email.utils.formataddr((rnd8.choice(NAMES), addr)) if rnd8.random() < .3 else addr
+            write(build(f"<bulk{addr[4:addr.index('@')]}-{i}@gen.test>", frm, u, f"{rnd8.choice(WORDS)} bulk status {addr[:addr.index('@')]}", ts, with_att=rnd8.random() < .15), ts)
+            note(frm, u); burst_exp[addr] += 1; exp8["burst_mails"] += 1
+            exp["conversations"] += 1; exp["threads"] += 1; exp["attachments"] += ATT_N; att_sizes.extend(ATT_SIZES)
+            j += 1
+            continue
+        if bcast and j >= bcast[0]:
+            used = fanout(i, j, M - j - len(pending.get(i, [])) - len(bq), write, broadcast=True)
+            if used: bcast.pop(0); j += used; continue
         if V >= 7 and rnd7.random() < .06:
             mts = time.time() - rnd7.randint(600, 3 * 86400)
             raw, _, sz = build_malformed(i, j, u, mts)
@@ -403,6 +503,9 @@ for i in range(1, N + 1):
             if V >= 3 and rnd.random() < .1:
                 subj = rnd.choice(SUBJECTS_NONASCII) + f" {i}-{j}"
                 hdr_subj = email.header.Header(subj, "utf-8").encode()
+            if V >= 8 and rnd8.random() < .04:
+                used = fanout(i, j, M - j - len(pending.get(i, [])) - len(bq), write)
+                if used: j += used; continue
             from_hdr, to_hdr, extra, copies = f"Customer {cust.split('@')[0]} <{cust}>", u, [], 1
             if V >= 4:
                 # several recipients: other customers in To/Cc, own alias, Reply-To, display-name quirks, case variants,
@@ -442,6 +545,7 @@ exp["customers"] = len(addrs) if V >= 4 else len(senders) + N   # + one customer
 exp["mails_in_mailboxes"] = N * M
 if V >= 5: exp.update(exp_extra, attachment_sizes=sorted(att_sizes))
 if V >= 7: exp.update(malformed_counts=mal_counts)
+if V >= 8: exp.update(exp8, fan_groups=fan_groups, fan_kinds=fan_kinds, burst_senders=burst_exp)
 if V >= 6: exp.update(exp6, long_thread_sizes=sorted(long_sizes, reverse=True), min_huge_len=min(huge_lens) if huge_lens else 0, quote_checks=quote_checks)
 open(os.path.join(os.path.dirname(OUT), "users"), "w").write("".join(f"{u}:{{PLAIN}}pw::::::\n" for u in users))
 json.dump(exp, open(os.path.join(os.path.dirname(OUT), "expected.json"), "w"))

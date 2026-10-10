@@ -80,12 +80,12 @@ case_run() {  # name -> prints PASS/FAIL, returns 1 on failure
 
 bench() {  # fresh + one fetch with metrics
   load; fresh
-  php_env odtest-php php /app/tests/e2e/bench.php "${1:-all}"
+  php_env odtest-php php -d memory_limit=${BENCH_MEM:-128M} /app/tests/e2e/bench.php "${1:-all}"
 }
 
 profile() {  # fresh + one fetch under the sampling profiler
   load; fresh
-  php_env odtest-php php /app/tests/e2e/profile.php "${1:-all}"
+  php_env odtest-php php -d memory_limit=${BENCH_MEM:-128M} /app/tests/e2e/profile.php "${1:-all}"
 }
 
 down() { docker rm -f odtest-db odtest-imap odtest-php >/dev/null 2>&1 || true; docker network rm $NET >/dev/null 2>&1 || true; }
