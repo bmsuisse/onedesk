@@ -31,7 +31,8 @@ if (isset($exp['attachment_sizes'])) {
     $got = DB::table('attachments')->orderBy('size')->pluck('size')->map(function ($v) { return (int) $v; })->all();
     if ($got !== $exp['attachment_sizes']) {
         $miss = array_count_values($exp['attachment_sizes']); foreach ($got as $v) { if (isset($miss[$v]) && --$miss[$v] === 0) unset($miss[$v]); }
-        $fail[] = 'attachment sizes differ from generated: '.array_sum($miss).' expected sizes missing in DB (e.g. '.implode(',', array_slice(array_keys($miss), 0, 5)).')';
+        $extra = array_count_values($got); foreach ($exp['attachment_sizes'] as $v) { if (isset($extra[$v]) && --$extra[$v] === 0) unset($extra[$v]); }
+        $fail[] = 'attachment sizes differ from generated: '.array_sum($miss).' expected sizes missing in DB (e.g. '.implode(',', array_slice(array_keys($miss), 0, 5)).'), '.array_sum($extra).' stored sizes not expected (e.g. '.implode(',', array_slice(array_keys($extra), 0, 5)).')';
     }
 }
 // Every attachment row belongs to a thread (no thread -> never deleted with its conversation, not shown with its thread).
@@ -122,6 +123,43 @@ if (!empty($exp['burst_senders'])) {
         $c = DB::table('emails')->where('email', $addr)->count();
         if ($c !== 1) $fail[] = "bulk sender $addr has $c customer emails != 1";
     }
+}
+// V>=9 theme (machine mail): per kind (header X-E2E-Kind: [kind]) the conversations it opened (first thread) and the threads it added, see gen.py. Auto-replies and out-of-office
+// loops join the conversation of their ticket (0 conversations); bounces never thread, not even with an In-Reply-To of a known ticket (conversations == threads) and are flagged
+// is_bounce in send_status_data; nothing else is flagged.
+if (!empty($exp['machine_kinds'])) {
+    $bounceKinds = ['ndr', 'ndrplain', 'nullpath'];
+    $bad = [];
+    foreach ($exp['machine_kinds'] as $kind => list($eConv, $eThr)) {
+        $like = '%X-E2E-Kind: ['.$kind.']%';
+        $gConv = DB::table('threads')->where('first', 1)->where('headers', 'like', $like)->count();
+        $gThr = DB::table('threads')->where('headers', 'like', $like)->count();
+        $flag = DB::table('threads')->where('headers', 'like', $like)->where('send_status_data', 'like', '%"is_bounce":true%')->count();
+        $eFlag = in_array($kind, $bounceKinds) ? $eThr : 0;
+        if ($gConv !== $eConv || $gThr !== $eThr) $bad[] = "$kind [convs,threads] [$gConv,$gThr] != [$eConv,$eThr]";
+        if ($flag !== $eFlag) $bad[] = "$kind: $flag threads flagged is_bounce != $eFlag";
+    }
+    if ($bad) $fail[] = 'machine mail: '.implode('; ', $bad);
+}
+// Mailing lists: per post marker LST-<i>-<j> and subscriber mailbox exactly one conversation holding the post and all its replies.
+if (!empty($exp['list_groups'])) {
+    $got = [];
+    $convRows = DB::table('conversations')->join('mailboxes', 'mailboxes.id', '=', 'conversations.mailbox_id')->where('conversations.subject', 'like', '%LST-%')
+        ->select('conversations.id', 'conversations.subject', 'mailboxes.email')->get();
+    $tcount = [];
+    foreach (array_chunk($convRows->pluck('id')->all(), 500) as $ids) {
+        $tcount += DB::table('threads')->whereIn('conversation_id', $ids)->select('conversation_id', DB::raw('count(*) as c'))->groupBy('conversation_id')->pluck('c', 'conversation_id')->all();
+    }
+    foreach ($convRows as $r) {
+        if (!preg_match('/LST-(\d+-\d+)/', $r->subject, $m)) continue;
+        $e = &$got['LST-'.$m[1]][$r->email]; $e = $e ?: [0, 0]; $e[0]++; $e[1] += (int) ($tcount[$r->id] ?? 0); unset($e);
+    }
+    $bad = [];
+    foreach ($exp['list_groups'] as $marker => $boxes) {
+        $g = $got[$marker] ?? []; ksort($g); ksort($boxes);
+        if ($g !== $boxes) $bad[] = $marker.' got '.json_encode($g).' != '.json_encode($boxes);
+    }
+    if ($bad) { $fail[] = count($bad).' of '.count($exp['list_groups']).' mailing-list threads wrong [mailbox [convs,threads]] (e.g. '.implode(' | ', array_slice($bad, 0, 3)).')'; fwrite(STDERR, "list detail:\n  ".implode("\n  ", $bad)."\n"); }
 }
 if ($dupMsg) $fail[] = "$dupMsg duplicated message_id values in threads";
 if ($dupMail) $fail[] = "$dupMail duplicated customer emails";

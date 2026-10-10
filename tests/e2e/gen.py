@@ -18,6 +18,7 @@ rnd5 = random.Random(SEED + 2000)  # theme "attachments" (V>=5) draws only from 
 rnd6 = random.Random(SEED + 3000)  # theme "long threads / huge bodies / quotes" (V>=6) draws only from this one
 rnd7 = random.Random(SEED + 4000)  # theme "malformed MIME" (V>=7) draws only from this one
 rnd8 = random.Random(SEED + 5000)  # theme "one mail to several mailboxes / same sender in all mailboxes" (V>=8) draws only from this one
+rnd9 = random.Random(SEED + 6000)  # theme "machine mail" (V>=9) draws only from this one
 WORDS = "invoice order delivery refund login password account billing shipping error crash update contact support".split()
 SUBJECTS_NONASCII = ["Rechnung für Bestellung", "Réclamation commande", "Wiederholte Störung — bitte prüfen", "注文について"]
 os.makedirs(OUT, exist_ok=True)
@@ -421,6 +422,252 @@ def fanout(i, j, room, write, broadcast=False):
         exp["threads"] += len(D); exp["attachments"] += ATT_N * len(D); att_sizes.extend(list(ATT_SIZES) * len(D))
         exp8["fanout_replies"] += 1
     return used
+# V>=9 theme: machine mail. Every machine mail carries "X-E2E-Kind: [<kind>]" (stored in threads.headers), so check.php can count conversations and threads per kind.
+# Semantics, from processMessage()/saveCustomerThread():
+#   * Auto-responders are NOT filtered on import: isAutoResponder() is only consulted for replies to a notification of an agent (no such mail here). An out-of-office
+#     mail from the customer with In-Reply-To of the ticket is an ordinary customer reply: +1 thread in that conversation, no new conversation.
+#     autoreply  customer's out-of-office reply to an earlier ticket (Auto-Submitted / X-Autoreply / Precedence), text or text+html: +1 thread
+#     oooloop    3-6 auto-replies, each In-Reply-To the previous one (ping-pong loop): +K threads in the ticket's conversation; one of them redelivered byte for byte (no extra thread)
+#     oooorphan  out-of-office with no In-Reply-To or an unknown one (and sometimes no Message-ID at all): new conversation
+#     ical       "Accepted: ..." meeting reply, multipart/alternative with a text/calendar part: calendar.ics is an attachment (non-text/plain|html part); 60% reply to a ticket
+#   * Bounces never thread: with $is_bounce the customer-reply lookup is skipped, so prev_thread stays null even if In-Reply-To names a known ticket -> new conversation
+#     and the thread gets send_status_data.is_bounce. Detection: multipart/report; report-type=delivery-status in Content-Type (MailHelper::detectBounceByHeaders),
+#     a message/delivery-status part, From mailer-daemon@, or "Return-Path: <>" as the FIRST header line (the regex is anchored to the start of the header block).
+#     ndr        multipart/report: text + message/delivery-status + (message/rfc822 | text/rfc822-headers | nothing): every non-text/plain|html part is an attachment
+#     ndrplain   plain text from MAILER-DAEMON@ (qmail style), maybe without Message-ID
+#     nullpath   plain text auto-generated mail with "Return-Path: <>" first and In-Reply-To of an earlier ticket (when there is one)
+#   * list: mailing-list posts (List-Id, Precedence: list, Reply-To = list or member, "X via list" From munging): a post + 0-3 replies chained by In-Reply-To = ONE conversation;
+#     delivered to the list's subscriber mailboxes (1-3, To names only the list address, so the extra mailboxes see it as Bcc and import their own copy through the artificial
+#     Message-ID): per mailbox 1 conversation, 1+K threads (marker LST-<i>-<j> in the subject, check.php list_groups). Reply-To wins as sender, so customers = list / member address.
+#   * bulk: spam-like bulk (Precedence: bulk, List-Unsubscribe, X-Mailer variety, 5-40 recipients in To, html only with tracking pixel, sometimes huge, Reply-To elsewhere): a new
+#     conversation, one customer per address (every To address becomes a customer).
+#   * spoofself  From = the mailbox's own address;  mbloop  auto-reply chain between mailboxes (From another mailbox of this install): 1 conversation, K threads
+#   * longmid    Message-ID of 200-850 chars (column is varchar(998), unique index on the first 191); 50% get a reply carrying it in In-Reply-To
+# Also 35% of the normal new tickets get typical mailer headers (X-Mailer, folded Received/DKIM-Signature, Authentication-Results, X-Spam-*, Thread-Index, Importance...).
+MKINDS = {"autoreply": 20, "oooloop": 5, "oooorphan": 7, "ical": 6, "ndr": 14, "ndrplain": 8, "nullpath": 4, "list": 16, "bulk": 12, "spoofself": 3, "mbloop": 3, "longmid": 4}
+mach = {}            # kind -> [conversations, threads] a correct import creates
+list_groups = {}     # marker -> {mailbox: [conversations, threads]}
+MAILERS = ["Postfix", "Exim 4.96", "Sendmail 8.15.2", "Microsoft Outlook 16.0", "Apple Mail (2.3774.600.62)", "Mozilla Thunderbird 115.3", "PHPMailer 6.8.0",
+           "Mailchimp Mailer - **CID1a2b3c4d5e**", "SendGrid", "Amazon SES", "Zimbra 9.0.0_GA_4570", "Lotus Notes Release 9.0.1 January 13, 2015", "The Bat! 10.2", "Roundcube Webmail/1.6.2", "Sendinblue"]
+OOO_SUBJ = ["Automatic reply: ", "Out of Office: ", "Abwesenheitsnotiz: ", "Autoreply: ", "Automatische Antwort: ", "Réponse automatique : "]
+OOO_TXT = ["I am currently out of the office with limited access to email and will return on Monday. For urgent matters please contact my colleagues.\n",
+           "Vielen Dank für Ihre Nachricht. Ich bin bis am Montag nicht im Büro und beantworte Ihre E-Mail nach meiner Rückkehr.\n",
+           "This is an automatic reply. Your message has been received, I will get back to you as soon as possible.\n"]
+def macct(kind, convs, threads, atts=0, sizes=()):
+    m = mach.setdefault(kind, [0, 0]); m[0] += convs; m[1] += threads
+    exp["conversations"] += convs; exp["threads"] += threads; exp["attachments"] += atts; att_sizes.extend(sizes)
+def m_hdr(kind, mid, ts, frm, to, subj, extra=()):
+    h = [f"Message-ID: {mid}"] if mid else []
+    return h + [f"Date: {email.utils.formatdate(ts)}", f"From: {frm}", f"To: {to}", f"Subject: {subj}", "MIME-Version: 1.0", f"X-E2E-Kind: [{kind}]"] + list(extra)
+def m_text(h, body, ctype="text/plain; charset=utf-8", cte="7bit"):
+    return "\n".join(h) + f"\nContent-Type: {ctype}\nContent-Transfer-Encoding: {cte}\n\n{body}"
+def m_alt(h, txt, htm):
+    b = f"----=_Alt_{rnd9.randint(10**5, 10**6)}_{rnd9.randint(10**8, 10**9)}"
+    return "\n".join(h) + f'\nContent-Type: multipart/alternative; boundary="{b}"\n\n--{b}\nContent-Type: text/plain; charset=utf-8\nContent-Transfer-Encoding: 7bit\n\n{txt}\n--{b}\nContent-Type: text/html; charset=utf-8\nContent-Transfer-Encoding: 7bit\n\n{htm}\n--{b}--\n'
+def w9(lo, hi): return " ".join(rnd9.choice(WORDS) for _ in range(rnd9.randint(lo, hi)))
+def clen(s): return len(s.strip(" \t\n\r\0\x0b").replace("\n", "\r\n"))   # IMAP delivers CRLF, Part::parse() trims the part body, 7bit content is stored as is
+def ts_after(pts, now, lo=5, hi=3600):
+    return pts + rnd9.randint(lo, max(lo, min(hi, int(now - pts) - 2)))
+def mailer_headers():
+    """typical headers of real mailers on a normal mail (none of them influences import)"""
+    pool = [lambda: "X-Mailer: " + rnd9.choice(MAILERS), lambda: "User-Agent: " + rnd9.choice(MAILERS),
+            lambda: "X-Priority: " + rnd9.choice(["1 (Highest)", "3 (Normal)", "5 (Lowest)"]), lambda: "Importance: " + rnd9.choice(["high", "normal", "low"]),
+            lambda: "X-MSMail-Priority: High", lambda: "Content-Language: de-CH", lambda: "Accept-Language: de-CH, en-US",
+            lambda: "Thread-Index: AQHb" + "".join(rnd9.choice("abcdefABCDEF0123456789+/") for _ in range(30)) + "==",
+            lambda: "X-MS-Has-Attach:", lambda: "X-MS-TNEF-Correlator:", lambda: "Auto-Submitted: no",
+            lambda: "X-Spam-Status: No, score=" + str(round(rnd9.uniform(-3, 3), 1)) + " required=5.0 tests=HTML_MESSAGE,SPF_PASS autolearn=ham",
+            lambda: "X-Spam-Score: " + str(round(rnd9.uniform(-3, 3), 1)), lambda: "X-Spam-Flag: NO",
+            lambda: "Authentication-Results: mx.gen.test;\n\tdkim=pass header.d=example.org header.s=sel1;\n\tspf=pass smtp.mailfrom=example.org;\n\tdmarc=pass header.from=example.org",
+            lambda: "Received: from mail-wr1-f41.google.com (mail-wr1-f41.google.com [209.85.221.41])\n\tby mx.gen.test (Postfix) with ESMTPS id " + "".join(rnd9.choice("ABCDEF0123456789") for _ in range(10)) + "\n\tfor <mb1@test.local>; Mon, 15 Jan 2024 10:00:00 +0100 (CET)",
+            lambda: "DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed; d=example.org; s=sel1;\n\th=to:subject:message-id:date:from:mime-version:from:to:cc:subject:date\n\t:message-id:reply-to; bh=" + "".join(rnd9.choice("abcXYZ0123456789+/") for _ in range(43)) + "=;\n\tb=" + "".join(rnd9.choice("abcXYZ0123456789+/") for _ in range(170))]
+    return [f() for f in rnd9.sample(pool, rnd9.randint(1, 6))]
+def mach_ticket(tickets):
+    return rnd9.choice(tickets) if tickets else None
+def machine(i, j, u, room, write, tickets):
+    """one machine mail event written into mailbox i (and queued for subscriber mailboxes of a list); -> slots used in mailbox i, 0 if it does not fit"""
+    global ATT_N
+    kind = rnd9.choices(list(MKINDS), list(MKINDS.values()))[0]
+    now = time.time()
+    if not tickets and kind in ("autoreply", "oooloop", "nullpath"): kind = "oooorphan"
+    if kind == "mbloop" and N < 2: kind = "spoofself"
+    pool = lambda: f"cust{rnd9.randint(1, 300)}@example.org"
+    if kind == "autoreply":
+        mid0, _, subj, pts, _, from_hdr = mach_ticket(tickets)
+        ts = ts_after(pts, now)
+        extra = [f"In-Reply-To: {mid0}", f"References: {mid0}"] + rnd9.sample(["Auto-Submitted: auto-replied", "X-Autoreply: yes", "Precedence: auto_reply", "X-Auto-Response-Suppress: All"], rnd9.randint(1, 3))
+        h = m_hdr(kind, f"<mch-ar{i}-{j}@gen.test>", ts, from_hdr, u, rnd9.choice(OOO_SUBJ) + subj, extra)
+        txt = rnd9.choice(OOO_TXT)
+        write(m_alt(h, txt, "<html><body><p>" + txt + "</p></body></html>") if rnd9.random() < .4 else m_text(h, txt), ts)
+        note(from_hdr, u); macct(kind, 0, 1)
+        return 1
+    if kind == "oooloop":
+        K = rnd9.randint(3, 6)
+        if room < K: return 0
+        mid0, _, subj, pts, _, from_hdr = mach_ticket(tickets)
+        avail = int(now - pts) - 2
+        step = rnd9.randint(1, max(1, min(900, avail // (K + 1))))
+        prev, refs, prefix, raws = mid0, [mid0], rnd9.choice(OOO_SUBJ), []
+        txt = rnd9.choice(OOO_TXT)
+        for k in range(K):
+            ts = pts + (k + 1) * step
+            mid = f"<mch-ool{i}-{j}-{k}@gen.test>"
+            h = m_hdr(kind, mid, ts, from_hdr, u, prefix * (k + 1) + subj, [f"In-Reply-To: {prev}", "References: " + " ".join(refs), "Auto-Submitted: auto-replied", "X-Autoreply: yes"])
+            raw = m_text(h, txt); raws.append((raw, ts)); write(raw, ts)
+            prev = mid; refs.append(mid)
+        used = K
+        if room > K and rnd9.random() < .4:
+            raw, ts = rnd9.choice(raws); write(raw, ts); used += 1       # redelivered byte for byte: same Message-ID, same headers -> imported once
+        note(from_hdr, u); macct(kind, 0, K)
+        return used
+    if kind in ("oooorphan", "ical"):
+        mid0 = None
+        if kind == "ical" and tickets and rnd9.random() < .6: mid0, _, subj0, pts, _, from_hdr = mach_ticket(tickets)
+        if mid0:
+            ts = ts_after(pts, now); subj = rnd9.choice(["Accepted: ", "Zugesagt: ", "Tentative: "]) + subj0; conv = 0
+            extra = [f"In-Reply-To: {mid0}", f"References: {mid0}"]
+        else:
+            ts = now - rnd9.randint(600, 3 * 86400); from_hdr = pool(); conv = 1
+            subj = (rnd9.choice(["Accepted: ", "Zugesagt: "]) if kind == "ical" else rnd9.choice(OOO_SUBJ)) + f"{rnd9.choice(WORDS)} {i}-{j}"
+            extra = [f"In-Reply-To: <sent-{rnd9.randint(1, 10**9)}@out.onedesk.example>"] if rnd9.random() < .5 else []
+        if kind == "oooorphan":
+            extra += ["Auto-Submitted: auto-replied", "Precedence: auto_reply"]
+            h = m_hdr(kind, None if rnd9.random() < .25 else f"<mch-oo{i}-{j}@gen.test>", ts, from_hdr, u, subj, extra)
+            write(m_text(h, rnd9.choice(OOO_TXT)), ts); note(from_hdr, u); macct(kind, 1, 1)
+            return 1
+        ics = ("BEGIN:VCALENDAR\r\nMETHOD:REPLY\r\nPRODID:-//Microsoft Corporation//Outlook 16.0 MIMEDIR//EN\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\n"
+               f"ATTENDEE;PARTSTAT=ACCEPTED:mailto:{email.utils.parseaddr(from_hdr)[1]}\r\nDTSTART:20240115T100000Z\r\nDTEND:20240115T110000Z\r\nUID:{rnd9.randint(10**8, 10**9)}-{i}-{j}@gen.test\r\nSUMMARY:{subj}\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n")
+        b = f"----=_Cal_{rnd9.randint(10**5, 10**6)}"
+        h = m_hdr(kind, f"<mch-ical{i}-{j}@gen.test>", ts, from_hdr, u, subj, extra)
+        write("\n".join(h) + f'\nContent-Type: multipart/alternative; boundary="{b}"\n\n--{b}\nContent-Type: text/plain; charset=utf-8\nContent-Transfer-Encoding: 7bit\n\nThe meeting has been accepted.\n'
+              f'--{b}\nContent-Type: text/calendar; charset=utf-8; method=REPLY\nContent-Transfer-Encoding: base64\n\n{b64(ics.encode())}--{b}--\n', ts)
+        note(from_hdr, u); macct(kind, conv, 1, 1, [len(ics)])
+        return 1
+    if kind in ("ndr", "ndrplain", "nullpath"):
+        dom = f"mx{rnd9.randint(1, 9)}.gen.test"
+        victim = f"user{rnd9.randint(1, 999)}@remote{rnd9.randint(1, 20)}.example"
+        ts = now - rnd9.randint(600, 3 * 86400)
+        extra, pre = [], []
+        if tickets and rnd9.random() < (.9 if kind == "nullpath" else .4):
+            mid0, _, subj0, pts, _, _ = mach_ticket(tickets); ts = ts_after(pts, now)
+            extra += [f"In-Reply-To: {mid0}", f"References: {mid0}"]
+        mid = None if rnd9.random() < .1 else f"<mch-{kind}{i}-{j}@{dom}>"
+        if kind == "nullpath":
+            if not extra: return 0
+            frm = f"Postmaster <postmaster@{dom}>"
+            h = ["Return-Path: <>"] + m_hdr(kind, mid, ts, frm, u, rnd9.choice(["Delivery Status Notification (Delay)", "Mail delivery failed: returning message to sender", "Auto-generated: your message was not delivered"]), extra + ["Auto-Submitted: auto-generated"])
+            write(m_text(h, f"Your message to {victim} could not be delivered yet.\nThe system will keep trying for 4 days.\n"), ts)
+            note(frm, u); macct(kind, 1, 1)
+            return 1
+        if kind == "ndrplain":
+            frm = rnd9.choice([f"MAILER-DAEMON@{dom}", f"Mail Delivery System <Mailer-Daemon@{dom}>", f"MAILER-DAEMON@{dom} (Mail Delivery System)"])
+            h = m_hdr(kind, mid, ts, frm, u, rnd9.choice(["failure notice", "Undelivered Mail Returned to Sender", "Delivery Status Notification (Failure)"]), extra)
+            write(m_text(h, f"Hi. This is the qmail-send program at {dom}.\nI'm afraid I wasn't able to deliver your message to the following addresses.\nThis is a permanent error; I've given up. Sorry it didn't work out.\n\n<{victim}>:\n550 5.1.1 User unknown\n"), ts)
+            note(frm, u); macct(kind, 1, 1)
+            return 1
+        frm = rnd9.choice([f"Mail Delivery Subsystem <MAILER-DAEMON@{dom}>", f"MAILER-DAEMON@{dom} (Mail Delivery System)", f"Microsoft Outlook <postmaster@{dom}>", f"postmaster@{dom}"])
+        b = f"{''.join(rnd9.choice('ABCDEF0123456789') for _ in range(10))}.{rnd9.randint(10**9, 2 * 10**9)}/{dom}"
+        dsn = f"Reporting-MTA: dns; {dom}\nX-Postfix-Queue-ID: {rnd9.randint(10**8, 10**9):X}\nArrival-Date: {email.utils.formatdate(ts)}\n\nFinal-Recipient: rfc822; {victim}\nAction: failed\nStatus: 5.1.1\nDiagnostic-Code: smtp; 550 5.1.1 <{victim}>: Recipient address rejected: User unknown\n"
+        orig = f"Message-ID: <out{i}-{j}@onedesk.example>\nFrom: support@onedesk.example\nTo: {victim}\nSubject: Re: {w9(1, 3)}\nDate: {email.utils.formatdate(ts - 60)}\nMIME-Version: 1.0\nContent-Type: text/plain; charset=utf-8\n\n{body_text()}"
+        form = rnd9.choice(["full", "full", "headers", "none"])
+        raw = ("\n".join((["Return-Path: <>"] if rnd9.random() < .6 else []) + m_hdr(kind, mid, ts, frm, u, rnd9.choice(["Undelivered Mail Returned to Sender", "Delivery Status Notification (Failure)", "Undeliverable: " + w9(1, 3), "Zustellung fehlgeschlagen"]),
+                         extra + ["Auto-Submitted: auto-replied", f"X-Failed-Recipients: {victim}"])) +
+               f'\nContent-Type: multipart/report; report-type=delivery-status;\n\tboundary="{b}"\n\n--{b}\nContent-Description: Notification\nContent-Type: text/plain; charset=utf-8\n\n'
+               f"This is the mail system at host {dom}.\n\nI'm sorry to have to inform you that your message could not be delivered to one or more recipients.\n\n<{victim}>: host remote.example said: 550 5.1.1 User unknown\n\n"
+               f"--{b}\nContent-Description: Delivery report\nContent-Type: message/delivery-status\n\n{dsn}\n")
+        sizes = [clen(dsn)]
+        if form == "full": raw += f"--{b}\nContent-Description: Undelivered Message\nContent-Type: message/rfc822\nContent-Transfer-Encoding: 8bit\n\n{orig}\n"; sizes.append(clen(orig))
+        elif form == "headers": hd = orig.split("\n\n")[0] + "\n"; raw += f"--{b}\nContent-Description: Undelivered Message Headers\nContent-Type: text/rfc822-headers\nContent-Transfer-Encoding: 7bit\n\n{hd}\n"; sizes.append(clen(hd))
+        write(raw + f"--{b}--\n", ts)
+        note(frm, u); macct(kind, 1, 1, len(sizes), sizes)
+        return 1
+    if kind == "list":
+        lst = rnd9.randint(1, 12)
+        lst_addr, lst_id = f"dev{lst}@lists.example", f"<dev{lst}.lists.example>"
+        K = rnd9.choice([0, 0, 1, 2, 3])
+        cap = max(1, M // 10)
+        later = [x for x in range(i + 1, N + 1) if len(pending.get(x, [])) + 1 + K <= cap]
+        S = [i] + sorted(rnd9.sample(later, min(rnd9.choice([0, 0, 0, 1, 1, 2]), len(later))))
+        K = min(K, room - 1)
+        if K < 0: return 0
+        style = rnd9.choice(["member", "munged", "listreply"])
+        ts0 = now - rnd9.randint(1200, 3 * 86400)
+        member = lambda: f"colleague{rnd9.randint(1, 80)}@partner.example" if rnd9.random() < .6 else pool()
+        marker = f"LST-{i}-{j}"
+        subj = f"[dev{lst}] {rnd9.choice(WORDS)} {marker}"
+        mids = [f"<mch-ls{i}-{j}-{k}@gen.test>" for k in range(K + 1)]
+        gap = rnd9.randint(30, max(31, min(1800, int((now - ts0) / (K + 1)) - 2)))
+        nm = ["Hans Müller", "Pat O'Brien", "Anna Schmid", "José Álvarez"]
+        for k in range(K + 1):
+            ts = ts0 + k * gap
+            m, n = member(), rnd9.choice(nm)
+            frm = email.utils.formataddr((n, m)) if style != "munged" else email.utils.formataddr((n + f" via dev{lst}", lst_addr))
+            ex = [f"List-Id: Dev {lst} <dev{lst}.lists.example>", f"List-Post: <mailto:{lst_addr}>", f"List-Unsubscribe: <mailto:dev{lst}-request@lists.example?subject=unsubscribe>, <https://lists.example/u/{lst}>",
+                  f"List-Help: <mailto:dev{lst}-request@lists.example?subject=help>", "Precedence: list", f"Sender: dev{lst}-bounces@lists.example", "Errors-To: dev%d-bounces@lists.example" % lst, "X-Mailman-Version: 2.1.29"]
+            if style == "munged": ex.append(f"Reply-To: {m}")
+            if style == "listreply": ex.append(f"Reply-To: {lst_addr}")
+            if k: ex += [f"In-Reply-To: {mids[k - 1]}", "References: " + " ".join(mids[:k])]
+            h = m_hdr(kind, mids[k], ts, frm, lst_addr, ("Re: " if k else "") + subj, ex)
+            raw = m_text(h, w9(8, 60) + f"\n\n_______________________________________________\ndev{lst} mailing list\n{lst_addr}\nhttps://lists.example/listinfo/dev{lst}\n")
+            write(raw, ts)
+            for x in S[1:]: pending.setdefault(x, []).append((raw, ts))
+            note(frm, lst_addr, *[x[10:] for x in ex if x.startswith("Reply-To:")])
+        list_groups[marker] = {f"mb{x}@test.local": [1, K + 1] for x in S}
+        macct(kind, len(S), len(S) * (K + 1))
+        return K + 1
+    if kind == "bulk":
+        ts = now - rnd9.randint(600, 3 * 86400)
+        n = rnd9.randint(1, 3000)
+        frm = email.utils.formataddr((rnd9.choice(NAMES), f"news{rnd9.randint(1, 500)}@promo{rnd9.randint(1, 40)}.example")) if rnd9.random() < .7 else f"offers{n}@promo{rnd9.randint(1, 40)}.example"
+        rcpt = [f"victim{rnd9.randint(1, 3000)}@spam-target.example" for _ in range(rnd9.randint(5, 40))]
+        if rnd9.random() < .5: rcpt.insert(rnd9.randint(0, len(rcpt)), u)
+        to = ",\n\t".join(rcpt)      # folded: 40 recipients exceed the 998 character line limit
+        subj = rnd9.choice(["FINAL NOTICE: YOUR ACCOUNT", "Re: Re: Fwd: invoice " + str(n), "Big SALE -70% " + w9(2, 4), "\U0001f389 Winner " + w9(1, 2) + " \U0001f389", "Quick question " + w9(1, 3), "x" * rnd9.randint(240, 300) + " " + str(n)])
+        hs = email.header.Header(subj, "utf-8").encode() if any(ord(c) > 127 for c in subj) else subj
+        extra = [f"X-Mailer: {rnd9.choice(MAILERS)}", "Precedence: bulk", f"List-Unsubscribe: <mailto:unsub{n}@promo.example?subject=unsubscribe>, <https://promo.example/u/{n}>", "List-Unsubscribe-Post: List-Unsubscribe=One-Click", f"Feedback-ID: {n}:camp{n}:promo:{n}"]
+        if rnd9.random() < .25: extra += ["X-Spam-Flag: YES", "X-Spam-Score: 9.4"]
+        if rnd9.random() < .5:
+            rt = f"reply{rnd9.randint(1, 500)}@promo-reply.example"; extra.append(f"Reply-To: {rt}"); note(rt)
+        row = f'<tr><td style="padding:4px;font-family:Arial;color:#333333">{w9(2, 6)} <a href="https://promo.example/c?id={n}&amp;x=1">click</a></td></tr>\n'
+        htm = '<html><body><table width="600">\n' + row * (rnd9.randint(2000, 6000) if rnd9.random() < .1 else rnd9.randint(3, 40)) + '</table><img src="http://track.promo.example/p.gif?u=%d" width="1" height="1" alt=""></body></html>' % n
+        h = m_hdr(kind, f"<mch-bulk{i}-{j}@promo.example>", ts, frm, to, hs, extra)
+        write(m_text(h, quopri.encodestring(htm.encode()).decode(), "text/html; charset=utf-8", "quoted-printable"), ts)
+        note(frm, to); macct(kind, 1, 1)
+        return 1
+    if kind == "spoofself":
+        ts = now - rnd9.randint(600, 3 * 86400)
+        frm = f"Support Team <{u}>"
+        h = m_hdr(kind, f"<mch-spoof{i}-{j}@gen.test>", ts, frm, u, rnd9.choice(["Your mailbox is full", "Password expires today", "Message from your administrator"]) + f" {i}-{j}", ["X-Mailer: " + rnd9.choice(MAILERS)])
+        write(m_text(h, w9(8, 40) + "\n"), ts); note(frm, u); macct(kind, 1, 1)
+        return 1
+    if kind == "mbloop":
+        K = rnd9.randint(3, 5)
+        if room < K: return 0
+        o = rnd9.choice([x for x in range(1, N + 1) if x != i])
+        frm = f"mb{o}@test.local"
+        ts0 = now - rnd9.randint(1200, 3 * 86400)
+        step = rnd9.randint(1, max(1, min(900, int((now - ts0) / (K + 1)) - 2)))
+        subj = f"{rnd9.choice(WORDS)} loop {i}-{j}"
+        for k in range(K):
+            ts = ts0 + k * step
+            ex = ["Auto-Submitted: auto-replied", "X-Autoreply: yes"] + ([f"In-Reply-To: <mch-lp{i}-{j}-{k - 1}@gen.test>", f"References: <mch-lp{i}-{j}-{k - 1}@gen.test>"] if k else [])
+            write(m_text(m_hdr(kind, f"<mch-lp{i}-{j}-{k}@gen.test>", ts, frm, u, "Re: " * (k + 1) + subj, ex), rnd9.choice(OOO_TXT)), ts)
+        note(frm, u); macct(kind, 1, K)
+        return K
+    if kind == "longmid":
+        ts = now - rnd9.randint(1200, 3 * 86400)
+        mid = "<" + "".join(rnd9.choice("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-=+") for _ in range(rnd9.randint(200, 850))) + "@long.gen.test>"
+        cust = pool(); frm = f"Customer {cust.split('@')[0]} <{cust}>"
+        subj = f"{rnd9.choice(WORDS)} {i}-{j}"
+        write(m_text(m_hdr(kind, mid, ts, frm, u, subj), w9(8, 80) + "\n"), ts); note(frm, u)
+        used, thr = 1, 1
+        if room > 1 and rnd9.random() < .5:
+            ts2 = ts_after(ts, now)
+            write(m_text(m_hdr(kind, f"<mch-lm{i}-{j}@gen.test>", ts2, frm, u, "Re: " + subj, [f"In-Reply-To: {mid}", f"References: {mid}"]), w9(8, 40) + "\n"), ts2)
+            used, thr = 2, 2
+        macct(kind, 1, thr)
+        return used
+    return 0
+
 # one bulk sender per ~40 mails; the dates are shared by all mailboxes (a few seconds apart), so mailboxes fetched in parallel meet the sender at the same time
 bursts = []
 if V >= 8 and N >= 2:
@@ -470,6 +717,9 @@ for i in range(1, N + 1):
         if bcast and j >= bcast[0]:
             used = fanout(i, j, M - j - len(pending.get(i, [])) - len(bq), write, broadcast=True)
             if used: bcast.pop(0); j += used; continue
+        if V >= 9 and rnd9.random() < .09:
+            used = machine(i, j, u, M - j - len(pending.get(i, [])) - len(bq), write, tickets)
+            if used: j += used; continue
         if V >= 7 and rnd7.random() < .06:
             mts = time.time() - rnd7.randint(600, 3 * 86400)
             raw, _, sz = build_malformed(i, j, u, mts)
@@ -532,6 +782,7 @@ for i in range(1, N + 1):
                     note(rt)
                 note(from_hdr, to_hdr, *[x[4:] for x in extra if x.startswith("Cc:")])
                 if multi: copies = 2
+            if V >= 9 and rnd9.random() < .35: extra += mailer_headers()
             if V >= 6 and not att and copies == 1 and rnd6.random() < .012: raw = build_huge(mid, from_hdr, to_hdr, hdr_subj, ts, extra)
             else: raw = build(mid, from_hdr, to_hdr, hdr_subj, ts, kind=kind, with_att=att, extra=extra, inline=inl)
             write(raw, ts)
@@ -546,6 +797,7 @@ exp["mails_in_mailboxes"] = N * M
 if V >= 5: exp.update(exp_extra, attachment_sizes=sorted(att_sizes))
 if V >= 7: exp.update(malformed_counts=mal_counts)
 if V >= 8: exp.update(exp8, fan_groups=fan_groups, fan_kinds=fan_kinds, burst_senders=burst_exp)
+if V >= 9: exp.update(machine_kinds=mach, list_groups=list_groups)
 if V >= 6: exp.update(exp6, long_thread_sizes=sorted(long_sizes, reverse=True), min_huge_len=min(huge_lens) if huge_lens else 0, quote_checks=quote_checks)
 open(os.path.join(os.path.dirname(OUT), "users"), "w").write("".join(f"{u}:{{PLAIN}}pw::::::\n" for u in users))
 json.dump(exp, open(os.path.join(os.path.dirname(OUT), "expected.json"), "w"))
