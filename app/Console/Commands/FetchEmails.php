@@ -503,7 +503,7 @@ class FetchEmails extends Command
         }
     }
 
-    public function processMessage($message, $message_id, $mailbox, $mailboxes, $extra = false)
+    public function processMessage($message, $message_id, $mailbox, $mailboxes, $extra = false, $attempt = 1)
     {
         try {
 
@@ -1226,6 +1226,14 @@ class FetchEmails extends Command
             // Only transient DB errors (deadlock, lock wait timeout, lost connection) leave the mail unseen
             // to be retried on the next run. Everything else is deterministic (too long value, bad charset,
             // duplicate entry...) and retrying it forever would let one mail block the mailbox.
+            // A deadlock rolled the import back: retry in place (keeps the mail in order, a reply must not
+            // be imported before its parent), only then fall back to the next run.
+            if ($e instanceof \Illuminate\Database\QueryException && $attempt < 3
+                && ((int) ($e->errorInfo[1] ?? 0) === 1213 || ($e->errorInfo[0] ?? '') === '40001')
+            ) {
+                usleep(random_int(50, 250) * 1000);
+                return $this->processMessage($message, $message_id, $mailbox, $mailboxes, $extra, $attempt + 1);
+            }
             $transient_db_error = $e instanceof \Illuminate\Database\QueryException
                 && (in_array((int) ($e->errorInfo[1] ?? 0), [1205, 1213, 2006, 2013], true)
                     || ($e->errorInfo[0] ?? '') === '40001'
