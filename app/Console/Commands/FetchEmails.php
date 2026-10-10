@@ -651,7 +651,8 @@ class FetchEmails extends Command
                         }
                     }
                 }
-                if ($all_copies_done) {
+                // An extra copy never marks the mail Seen: only the outermost call does, after all copies are done.
+                if ($all_copies_done && !$extra) {
                     $this->setSeen($message, $mailbox);
                 }
                 return;
@@ -1239,10 +1240,11 @@ class FetchEmails extends Command
                     }
                 }
 
-                if ($all_copies_done) {
-                    $this->setSeen($message, $mailbox);
-                } else {
+                if (!$all_copies_done) {
                     $this->logError('Copy for another mailbox failed, message kept unseen to retry on the next run');
+                } elseif (!$extra) {
+                    // An extra copy leaves the mail unseen: the outermost call marks it after all copies are done.
+                    $this->setSeen($message, $mailbox);
                 }
                 $this->line('['.date('Y-m-d H:i:s').'] Thread successfully created: '.$new_thread->id);
 
@@ -1275,7 +1277,7 @@ class FetchEmails extends Command
                     // Only the threads.message_id key counts, other unique keys are deterministic.
                     || (!$extra && (int) ($e->errorInfo[1] ?? 0) === 1062
                         && strpos((string) ($e->errorInfo[2] ?? ''), 'threads_message_id_index') !== false));
-            if (!$transient_db_error) {
+            if (!$transient_db_error && !$extra) {
                 $this->setSeen($message, $mailbox);
             }
             $this->logError(\Helper::formatException($e));
