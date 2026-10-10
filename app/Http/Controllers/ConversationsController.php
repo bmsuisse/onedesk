@@ -3106,7 +3106,8 @@ class ConversationsController extends Controller
 
         // Customers tab is active: only the total for the tab badge is needed,
         // so skip loading the page of conversations.
-        if ($mode != Conversation::SEARCH_MODE_CONV) {
+        // A numeric query may jump straight to the conversation, so load it then.
+        if ($mode != Conversation::SEARCH_MODE_CONV && !is_numeric(ltrim($q, '#'))) {
             $page = \Illuminate\Pagination\Paginator::resolveCurrentPage();
 
             return new \Illuminate\Pagination\LengthAwarePaginator(
