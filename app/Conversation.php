@@ -250,7 +250,8 @@ class Conversation extends Model
 
         self::creating(function (Conversation $model) {
             $next_ticket = (int) Option::get('next_ticket');
-            $current_number = Conversation::max('number');
+            // Locking read: parallel fetchers must not read the same max (held until the import transaction commits).
+            $current_number = Conversation::lockForUpdate()->max('number');
 
             if ($next_ticket) {
                 Option::remove('next_ticket');

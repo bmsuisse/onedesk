@@ -549,6 +549,8 @@ class FetchEmails extends Command
     {
         // $extra may be switched on below for a mail that is this mailbox's own IMAP mail: only a call made for a sibling copy ($copy) leaves the mail unseen.
         $copy = $extra;
+        // A retry restarts from the original Message-ID: below it becomes artificial (a second copy would be imported).
+        $orig_message_id = $message_id;
 
         try {
 
@@ -1282,7 +1284,7 @@ class FetchEmails extends Command
                 && ((int) ($e->errorInfo[1] ?? 0) === 1213 || ($e->errorInfo[0] ?? '') === '40001')
             ) {
                 usleep(random_int(50, 250) * 1000);
-                return $this->processMessage($message, $message_id, $mailbox, $mailboxes, $copy, $attempt + 1);
+                return $this->processMessage($message, $orig_message_id, $mailbox, $mailboxes, $copy, $attempt + 1);
             }
             $transient_db_error = $e instanceof \App\AttachmentWriteException
                 || $e instanceof \Illuminate\Database\QueryException
