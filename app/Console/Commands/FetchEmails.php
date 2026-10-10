@@ -411,7 +411,7 @@ class FetchEmails extends Command
 
                 if ($last_error && !\Str::startsWith($last_error, 'Mailbox is empty')) {
                     // Throw exception for INBOX only
-                    if ($folder->name == 'INBOX' && !$messages) {
+                    if ($folder->name == 'INBOX' && $messages->isEmpty()) {
                         throw new \Exception($last_error, 1);
                     } else {
                         $this->error('['.date('Y-m-d H:i:s').'] '.$last_error);
