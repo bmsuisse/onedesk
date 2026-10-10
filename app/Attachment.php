@@ -156,18 +156,27 @@ class Attachment extends Model
         $file_dir = self::generatePath($attachment->id).$attachment->id.DIRECTORY_SEPARATOR;
         $file_path = self::DIRECTORY.DIRECTORY_SEPARATOR.$file_dir.$file_name;
 
-        try {
-            if ($uploaded_file) {
-                $stored = $uploaded_file->storeAs(self::DIRECTORY.DIRECTORY_SEPARATOR.$file_dir, $file_name, self::getDiskName());
-            } else {
-                $stored = self::getDisk()->put($file_path, $content);
+        // Flysystem creates the shared parent folders (1/2) without tolerating a parallel fetcher creating them at the same moment
+        // ("Impossible to create the root directory"): the second try finds the folder.
+        for ($try = 1; ; $try++) {
+            try {
+                if ($uploaded_file) {
+                    $stored = $uploaded_file->storeAs(self::DIRECTORY.DIRECTORY_SEPARATOR.$file_dir, $file_name, self::getDiskName());
+                } else {
+                    $stored = self::getDisk()->put($file_path, $content);
+                }
+                if ($stored === false) {
+                    throw new \RuntimeException('Could not write '.$file_path);
+                }
+                break;
+            } catch (\Exception $e) {
+                if ($try < 3) {
+                    usleep(random_int(10, 50) * 1000);
+                    continue;
+                }
+                \Helper::logException($e, '[Attachment::saveFileToDisk()]');
+                throw new AttachmentWriteException($e->getMessage(), 0, $e);
             }
-            if ($stored === false) {
-                throw new \RuntimeException('Could not write '.$file_path);
-            }
-        } catch (\Exception $e) {
-            \Helper::logException($e, '[Attachment::saveFileToDisk()]');
-            throw new AttachmentWriteException($e->getMessage(), 0, $e);
         }
 
         // $content may be a stream resource rather than a string; the SVG sanitizer needs
