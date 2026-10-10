@@ -199,6 +199,12 @@ if (!empty($exp['t11_kinds'])) {
     }
     if ($bad) $fail[] = 'folders/flags: '.implode('; ', $bad);
 }
+// V>=13 theme (storm): every "STORM-<i>-<j>" conversation holds exactly its ticket plus K replies (redeliveries imported once).
+if (!empty($exp['storm_sizes'])) {
+    $got = DB::table('threads')->join('conversations', 'conversations.id', '=', 'threads.conversation_id')->where('conversations.subject', 'like', 'STORM-%')
+        ->select('threads.conversation_id', DB::raw('count(*) as c'))->groupBy('threads.conversation_id')->orderBy('c', 'desc')->pluck('c')->map(function ($v) { return (int) $v; })->all();
+    if ($got !== $exp['storm_sizes']) $fail[] = 'storm conversations have '.implode(',', $got).' threads, expected '.implode(',', $exp['storm_sizes']);
+}
 // V>=12 theme (unusual senders and addresses): per kind (header X-E2E-Kind: [t12-<kind>]) the conversations opened and threads added, and per marker T12-<i>-<j> the (mailbox, customer_email,
 // subject) of every conversation: addresses are lower-cased, "+tag" variants stay distinct, subjects (300+ chars, emoji, RTL, RFC 2047 folded) are stored decoded and whole, see gen.py.
 if (!empty($exp['t12_kinds'])) {

@@ -1580,8 +1580,10 @@ class FetchEmails extends Command
                 $thread->save();
             }
             DB::commit();
+            Conversation::releaseNumberLock();
         } catch (\Throwable $e) {
             DB::rollBack();
+            Conversation::releaseNumberLock();
             throw $e;
         }
 
@@ -1769,8 +1771,10 @@ class FetchEmails extends Command
                 $thread->save();
             }
             DB::commit();
+            Conversation::releaseNumberLock();
         } catch (\Throwable $e) {
             DB::rollBack();
+            Conversation::releaseNumberLock();
             throw $e;
         }
 

@@ -22,6 +22,7 @@ rnd9 = random.Random(SEED + 6000)  # theme "machine mail" (V>=9) draws only from
 rnd10 = random.Random(SEED + 7000)  # theme "forwards / @fwd, mails from a mailbox address, helpdesk agents writing by email" (V>=10) draws only from this one
 rnd11 = random.Random(SEED + 8000)  # theme "several IMAP folders / flags / sent copies" (V>=11) draws only from this one
 rnd12 = random.Random(SEED + 9000)  # theme "unusual senders and addresses" (V>=12) draws only from this one
+rnd13 = random.Random(SEED + 10000)  # theme "storm: attachment-heavy ticket + rapid replies + redeliveries" (V>=13) draws only from this one
 WORDS = "invoice order delivery refund login password account billing shipping error crash update contact support".split()
 SUBJECTS_NONASCII = ["Rechnung für Bestellung", "Réclamation commande", "Wiederholte Störung — bitte prüfen", "注文について"]
 os.makedirs(OUT, exist_ok=True)
@@ -1085,6 +1086,35 @@ def theme12(i, j, u, room, write, tickets):
     return 1
 def t12conv(marker, mailbox, cust, subj): t12_convs.setdefault(marker, []).append([mailbox, cust.lower(), subj])
 
+
+# V>=13 theme (stress mix): a "storm" is one new customer's ticket followed by 3..4 rapid replies (In-Reply-To the ticket), every mail with attachment(s),
+# some replies delivered twice byte-identical (redelivery -> imported once). Exactly 1 conversation, 1+K threads, attachments of the distinct mails.
+# K <= 4 keeps a storm below the smallest long thread (6), so check.php's long_thread_sizes comparison is unaffected.
+storm_sizes = []
+def storm(i, j, u, room, write):
+    K = rnd13.randint(3, 4)
+    if room < 2 * K + 1: return 0
+    files = 0
+    now = time.time()
+    ts0 = now - rnd13.randint(7200, 2 * 86400)
+    cust = f"storm{i}x{j}@storm.example"
+    frm = f"Storm {i}-{j} <{cust}>"
+    marker = f"STORM-{i}-{j}"
+    mid0 = f"<st{i}-{j}-0@gen.test>"
+    subj = f"{marker} {rnd13.choice(WORDS)}"
+    ts = ts0
+    for k in range(K + 1):
+        raw = build(mid0 if k == 0 else f"<st{i}-{j}-{k}@gen.test>", frm, u, subj if k == 0 else "Re: " + subj, ts,
+                    in_reply_to=None if k == 0 else mid0, with_att=True, inline=rnd13.random() < .3)
+        write(raw, ts); files += 1
+        exp["threads"] += 1; exp["attachments"] += ATT_N; att_sizes.extend(ATT_SIZES)
+        if k == 0: exp["conversations"] += 1
+        note(frm, u)
+        if k and rnd13.random() < .4: write(raw, ts); files += 1       # redelivery, counts as a mail in the mailbox
+        ts += rnd13.randint(1, 120)
+    storm_sizes.append(K + 1)
+    return files
+
 # one bulk sender per ~40 mails; the dates are shared by all mailboxes (a few seconds apart), so mailboxes fetched in parallel meet the sender at the same time
 bursts = []
 if V >= 8 and N >= 2:
@@ -1151,6 +1181,9 @@ for i in range(1, N + 1):
             if used: j += used; continue
         if V >= 11 and rnd11.random() < (.12 if extras11 else .07):
             used = theme11(i, j, u, M - j - len(pending.get(i, [])) - len(bq), put11, tickets, extras11)
+            if used: j += used; continue
+        if V >= 13 and rnd13.random() < .04:
+            used = storm(i, j, u, M - j - len(pending.get(i, [])) - len(bq), write)
             if used: j += used; continue
         if V >= 12 and rnd12.random() < .08:
             used = theme12(i, j, u, M - j - len(pending.get(i, [])) - len(bq), write, tickets)
@@ -1236,6 +1269,7 @@ if V >= 9: exp.update(machine_kinds=mach, list_groups=list_groups)
 if V >= 10: exp.update(t10_kinds=t10, t10_convs={k: sorted(v) for k, v in t10_convs.items()})
 if V >= 11: exp.update(t11_kinds=t11, t11_flags=t11_flags, t11_mails=t11_mails)
 if V >= 12: exp.update(t12_kinds=t12, t12_convs={k: sorted(v) for k, v in t12_convs.items()}, t12_bodies=t12_bodies)
+if V >= 13: exp.update(storm_sizes=sorted(storm_sizes, reverse=True))
 if V >= 6: exp.update(exp6, long_thread_sizes=sorted(long_sizes, reverse=True), min_huge_len=min(huge_lens) if huge_lens else 0, quote_checks=quote_checks)
 open(os.path.join(os.path.dirname(OUT), "users"), "w").write("".join(f"{u}:{{PLAIN}}pw::::::\n" for u in users))
 json.dump(exp, open(os.path.join(os.path.dirname(OUT), "expected.json"), "w"))
