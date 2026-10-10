@@ -558,18 +558,9 @@ class FetchEmails extends Command
             // Mailbox has been mentioned in Bcc or email originates from within FreeScout.
             if (!$extra && $duplicate_message_id) {
 
-                $recipients = array_merge(
-                    $this->formatEmailList($message->getTo()),
-                    $this->formatEmailList($message->getCc())
-                );
-
-                // $is_outbound_from_fs is needed to fetch messages sent from one FreeScout mailbox to another.
-                // https://github.com/freescout-help-desk/freescout/issues/5368#issuecomment-4309140388
-                $is_outbound_from_fs = \MailHelper::isFsMessageId($duplicate_message_id->message_id);
-
-                if ((!in_array(Email::sanitizeEmail($mailbox->email), $recipients) || $is_outbound_from_fs)
-                    // Make sure that previous email has been imported into other mailbox.
-                    && $duplicate_message_id->conversation
+                // A recipient mailbox whose duplicate lives in another mailbox imports its own copy too:
+                // the artificial Message-ID below makes this idempotent if the original's fan-out already created it.
+                if ($duplicate_message_id->conversation
                     && $duplicate_message_id->conversation->mailbox_id != $mailbox->id
                 ) {
                     $extra = true;
@@ -1129,7 +1120,8 @@ class FetchEmails extends Command
                     $this->attrToArray($message->getBcc())
                 )));
                 
-                if (count($mailboxes) && count($recipient_emails) > 1) {
+                // An extra import never fans out further, the original import does it.
+                if (!$extra && count($mailboxes) && count($recipient_emails) > 1) {
                     foreach ($mailboxes as $check_mailbox) {
                         if ($check_mailbox->id == $mailbox->id) {
                             continue;
@@ -1220,7 +1212,11 @@ class FetchEmails extends Command
             // duplicate entry...) and retrying it forever would let one mail block the mailbox.
             $transient_db_error = $e instanceof \Illuminate\Database\QueryException
                 && (in_array((int) ($e->errorInfo[1] ?? 0), [1205, 1213, 2006, 2013], true)
-                    || ($e->errorInfo[0] ?? '') === '40001');
+                    || ($e->errorInfo[0] ?? '') === '40001'
+                    // Another mailbox imported the same Message-ID at the same moment (parallel fetch) and won the race:
+                    // keep the mail unseen, the next run finds its thread and imports this mailbox's own copy.
+                    // An extra import hitting its own artificial Message-ID already has its copy.
+                    || (!$extra && (int) ($e->errorInfo[1] ?? 0) === 1062));
             if (!$transient_db_error) {
                 $this->setSeen($message, $mailbox);
             }
