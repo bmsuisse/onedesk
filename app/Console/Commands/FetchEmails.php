@@ -366,21 +366,28 @@ class FetchEmails extends Command
             // shrinking the unseen set between pages (#4047), so page N would skip mails.
             // For unseen we always request page 1 (the remaining unseen mails) and stop
             // on an empty page. The loop stays bounded by $total_pages.
-            try {
-                $count_query = $folder->query()->since(now()->subDays($this->option('days')))->leaveUnread();
-                if ($unseen) {
-                    $count_query->unseen();
+            $total_messages = null;
+            while ($total_messages === null) {
+                try {
+                    $count_query = $folder->query()->since(now()->subDays($this->option('days')))->leaveUnread();
+                    if ($unseen) {
+                        $count_query->unseen();
+                    }
+                    if ($no_charset) {
+                        $count_query->setCharset(null);
+                    }
+                    $total_messages = $count_query->count();
+                } catch (\Exception $e) {
+                    $this->logError('Folder: '.$folder->name.'; Count error: '.$e->getMessage());
+                    if (!$no_charset) {
+                        // Charset issues (e.g. MS mailboxes): retry the count without charset.
+                        $no_charset = true;
+                    } else {
+                        // Still failing: fetch a single bunch so we never silently fetch nothing.
+                        // The per-bunch error handling below reports what goes wrong.
+                        $total_messages = $page_size;
+                    }
                 }
-                if ($no_charset) {
-                    $count_query->setCharset(null);
-                }
-                $total_messages = $count_query->count();
-            } catch (\Exception $e) {
-                // If the SEARCH count fails (e.g. charset issues on some servers), fall
-                // back to a single bunch so we never silently fetch nothing. The
-                // per-bunch charset retry below still recovers the rest on such servers.
-                $total_messages = $page_size;
-                $this->logError('Folder: '.$folder->name.'; Count error: '.$e->getMessage());
             }
             $total_pages = ($page_size > 0) ? (int) ceil($total_messages / $page_size) : 1;
 
@@ -411,14 +418,21 @@ class FetchEmails extends Command
                     $errors_count = count($client->getErrors());
                     // Solution for MS mailboxes.
                     // https://github.com/freescout-helpdesk/freescout/issues/176
-                    $messages_query = $folder->query()->since(now()->subDays($this->option('days')))->leaveUnread()->lazyParse()->setCharset(null);
-                    if ($unseen) {
-                        $messages_query->unseen();
-                    }
-                    $messages = $messages_query->get();
-
                     $no_charset = true;
-                    $last_error = $client->getLastError();
+                    $last_error = '';
+                    try {
+                        $messages_query = $folder->query()->since(now()->subDays($this->option('days')))->leaveUnread()->lazyParse()->setCharset(null);
+                        if ($unseen) {
+                            $messages_query->unseen();
+                        }
+                        $messages_query->limit($page_size, $unseen ? 1 : $page);
+                        $messages = $messages_query->get();
+
+                        $last_error = $client->getLastError();
+                    } catch (\Exception $e) {
+                        $last_error = $e->getMessage().'; File: '.$e->getFile().' ('.$e->getLine().')';
+                        $this->logError('Folder: '.$folder->name.'; Charset fallback error: '.$last_error);
+                    }
                 }
 
                 if ($last_error && !\Str::startsWith($last_error, 'Mailbox is empty')) {
