@@ -2,6 +2,23 @@
 
 > **OneDesk is a fork of [FreeScout](https://github.com/freescout-help-desk/freescout)** maintained by [BMS Suisse](https://github.com/bmsuisse). It is licensed under the [AGPL-3.0](LICENSE), like the original. FreeScout is copyright of its respective authors. Changes in this fork: parallel mailbox fetching (`APP_FETCH_PARALLEL`) and bug fixes. See the git history for details.
 
+## What OneDesk improves (mail fetching)
+
+- **Parallel fetching:** `APP_FETCH_PARALLEL=4` (default `1`, off) fetches one mailbox per child process, N at a time. No global sleep ramp in this mode. E2E: 1,730 mails across 20 mailboxes in ~21 s.
+- **Less work per mail:** about half the DB queries per imported mail (38.7 down to roughly 18-23), lazy parsing of message bodies, bunch-wise processing with lower memory use.
+- **Mail is no longer lost or duplicated**, among others:
+  - unseen paging drift that skipped mails
+  - Bcc/To fan-out into several mailboxes
+  - parallel races (message-id, attachment files, conversation numbers)
+  - mails killed mid-import
+  - failed extra-mailbox copies
+  - same Message-ID twice in one bunch
+- **More robust parsing:** multipart without boundary, nested single-child multipart, boundary text inside bodies, invalid UTF-8 plain-text bodies, huge/cyclic garbage mails.
+- **Honest monitoring:** failed folder counts/pages no longer record the run as successful, so the fetch monitor can alert. Transient DB errors are retried instead of marking the mail Seen.
+- **Tests:** `tests/e2e/run.sh test` runs the real `freescout:fetch-emails` against Dovecot and MariaDB in Docker with generated, realistic mail (attachments, malformed MIME, fan-out, mailing lists, bounces, kills) and checks exact counts.
+
+Known open: [#2](https://github.com/bmsuisse/onedesk/issues/2) (IMAP body fetch marks mail Seen before import), [#8](https://github.com/bmsuisse/onedesk/issues/8) (poison messages are retried every run). Idle-refresh speed with very many mailboxes is not yet measured or optimised.
+
 ---
 
 # Free Self-Hosted Zendesk & Help Scout Alternative
