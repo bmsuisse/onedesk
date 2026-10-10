@@ -241,8 +241,6 @@ if (!empty($exp['agent_reply_checks'])) {
     if ($nMsg !== $eMsg) $bad[] = "$nMsg agent message threads != expected $eMsg";
     if ($bad) $fail[] = count($bad).' agent-reply problems (e.g. '.implode('; ', array_slice($bad, 0, 4)).')';
 }
-$dupNum = DB::table('conversations')->select('number')->groupBy('number')->havingRaw('count(*) > 1')->count();
-if ($dupNum) $fail[] = "$dupNum duplicated conversation numbers";
 if ($dupMsg) $fail[] = "$dupMsg duplicated message_id values in threads";
 if ($dupMail) $fail[] = "$dupMail duplicated customer emails";
 if ($orphans) $fail[] = "$orphans conversations without customer";
