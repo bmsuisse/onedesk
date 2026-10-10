@@ -1455,7 +1455,7 @@ class FetchEmails extends Command
                 }
             }
 
-            $new_body = Thread::replaceBase64ImagesWithAttachments($thread->body);
+            $new_body = Thread::replaceBase64ImagesWithAttachments($thread->body, null, $thread->id);
             if ($new_body != $thread->body) {
                 $thread->body = $new_body;
                 $body_changed = true;
@@ -1644,7 +1644,7 @@ class FetchEmails extends Command
                 }
             }
 
-            $new_body = Thread::replaceBase64ImagesWithAttachments($thread->body);
+            $new_body = Thread::replaceBase64ImagesWithAttachments($thread->body, null, $thread->id);
             if ($new_body != $thread->body) {
                 $thread->body = $new_body;
                 $body_changed = true;

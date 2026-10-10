@@ -1582,13 +1582,13 @@ class Thread extends Model
         return $this->type == self::TYPE_MESSAGE;
     }
 
-    public static function replaceBase64ImagesWithAttachments($body, $user_id = null)
+    public static function replaceBase64ImagesWithAttachments($body, $user_id = null, $thread_id = null)
     {
         \Helper::setPcreBacktrackLimit();
 
         $body = preg_replace_callback(
             "#(<img[^<>]+src=[\"'])data:image/([^;]+);base64,([^\"']+)([\"'])#",
-            function ($match) {
+            function ($match) use ($thread_id) {
                 $attachment = null;
                 $data = base64_decode($match[3]);
 
@@ -1600,7 +1600,7 @@ class Thread extends Model
                         $data,
                         $uploaded_file = null,
                         $embedded = true,
-                        $thread_id = null,
+                        $thread_id,
                         $user_id = \Auth::id()
                     );
                 }
