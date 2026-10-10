@@ -12,3 +12,13 @@ for ($i = 1; $i <= (int) $argv[1]; $i++) {
     $m->save();
 }
 echo App\Mailbox::count()." mailboxes\n";
+// Helpdesk agents (V>=10 theme: @fwd forwards and agent replies by email). Inserted directly: no subscriptions, so no notification mails are triggered by imports.
+// agentN@helpdesk.example, N=1..6; agent6 also owns the alternate address agent6.alt@helpdesk.example. Role admin: may view every conversation.
+DB::table('users')->where('email', 'like', 'agent%@helpdesk.example')->delete();
+for ($i = 1; $i <= 6; $i++) {
+    $u = new App\User();
+    $u->forceFill(['first_name' => "Agent", 'last_name' => "No$i", 'email' => "agent$i@helpdesk.example", 'password' => bcrypt('secret'), 'role' => App\User::ROLE_ADMIN,
+        'status' => App\User::STATUS_ACTIVE, 'type' => App\User::TYPE_USER, 'emails' => $i == 6 ? 'agent6.alt@helpdesk.example' : null, 'timezone' => 'UTC']);
+    $u->save();
+}
+echo App\User::count()." users\n";

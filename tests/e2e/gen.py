@@ -19,6 +19,7 @@ rnd6 = random.Random(SEED + 3000)  # theme "long threads / huge bodies / quotes"
 rnd7 = random.Random(SEED + 4000)  # theme "malformed MIME" (V>=7) draws only from this one
 rnd8 = random.Random(SEED + 5000)  # theme "one mail to several mailboxes / same sender in all mailboxes" (V>=8) draws only from this one
 rnd9 = random.Random(SEED + 6000)  # theme "machine mail" (V>=9) draws only from this one
+rnd10 = random.Random(SEED + 7000)  # theme "forwards / @fwd, mails from a mailbox address, helpdesk agents writing by email" (V>=10) draws only from this one
 WORDS = "invoice order delivery refund login password account billing shipping error crash update contact support".split()
 SUBJECTS_NONASCII = ["Rechnung für Bestellung", "Réclamation commande", "Wiederholte Störung — bitte prüfen", "注文について"]
 os.makedirs(OUT, exist_ok=True)
@@ -668,6 +669,179 @@ def machine(i, j, u, room, write, tickets):
         return used
     return 0
 
+# V>=10 theme: forwarded mail and the @fwd command, mails whose From is a mailbox address (self-addressed, same Message-ID twice in one mailbox), helpdesk agents writing by email.
+# Every mail has a marker "T10-<i>-<j>" in the Subject (conversation-creating events) and "X-E2E-Kind: [t10-<kind>]"; check.php counts conversations/threads per kind and compares, per
+# marker, the (mailbox, customer_email, subject) of every conversation. Agents are the users seeded by seed.php (agent1..5@helpdesk.example, agent6 + alternate agent6.alt@...).
+# Semantics, from processMessage():
+#   * @fwd (FWD_AS_CUSTOMER_COMMAND): applies only if subject starts with 1-3 letters + ":" (Fwd:, FW:, WG:, TR:), the mail is no reply, has exactly one To and no Cc, the body STARTS with
+#     "@fwd" (tags stripped, case-insensitive), a "From:" address can be found in the body (first quote-delimited/angle-bracket address wins) and the sender is a user (main or alternate
+#     address). Then the sender becomes that original address (new customer if unknown), the subject loses its "Fwd:" prefix, the command is removed. One conversation, one thread.
+#     fwdcmd      agent forwards with @fwd (text, Gmail, Outlook web or Apple Mail html; sometimes an older forward below, sometimes agent6's alternate address, To an alias): customer = original sender
+#     fwdnouser   a customer writes "@fwd" in a forward: not a user, nothing is substituted (customer = sender, subject untouched)
+#     fwdnocmd    agent forwards without @fwd: customer = agent
+#     fwdcc       @fwd but a second recipient (To or Cc): customer = agent
+#     fwdnoaddr   @fwd with no address in the body: customer = agent
+#     fwdatt      agent forwards "as attachment" (message/rfc822 part, body "@fwd ..." without any address): customer = agent, one attachment
+#   * Mails from a mailbox address are plain customer mails (the mailbox is just another customer; nothing filters them):
+#     selfmail    From = mailbox / its alias / "Name <mailbox>", To = the mailbox: new conversation
+#     selfreply   the helpdesk's own copy (From mailbox or alias, To customer, Cc mailbox) with In-Reply-To of an earlier ticket: +1 thread in that conversation
+#     selffan     From = mailbox i, To lists mailbox i and 1-2 later mailboxes: every listed mailbox imports its own copy (one conversation each)
+#   * Same Message-ID twice in ONE mailbox: byte-identical headers = duplicate (skipped, body is not compared); different headers (extra Received/Delivered-To, other Date) = a new mail
+#     (#5591): imported under the artificial Message-ID generateMessageId(mid, mailbox_id.mid), a third copy with other headers would hit that artificial id and be skipped (not generated).
+#     dupidhdr    two variants with different headers: 2 conversations      dupidbody  same headers, different body: 1 conversation
+#   * Agents: a reply to a notification carries In-Reply-To FS_notify-<thread>-<user>-<hash>@host with hash = md5(thread_id . app.key)[:16]; an invalid hash (or one of other length) logs an error,
+#     sets Seen and drops the mail before any customer is created (gen cannot know thread ids: valid replies are the two-phase case cases/agentreply.sh)
+#     agbadhash   dropped: no conversation, no thread, no customer
+#     agentdirect agent answers the customer's mail from their own client (In-Reply-To = ticket Message-ID, no notification id): an ordinary customer reply from the agent's address, +1 thread
+#     agentnew    agent writes a new mail to the mailbox: new conversation, customer = agent
+T10 = {"fwdcmd": 22, "fwdnouser": 6, "fwdnocmd": 6, "fwdcc": 5, "fwdnoaddr": 4, "fwdatt": 4, "selfmail": 10, "selfreply": 8, "selffan": 4,
+       "dupidhdr": 7, "dupidbody": 4, "agbadhash": 8, "agentdirect": 8, "agentnew": 5}
+t10 = {}             # kind -> [conversations, threads] a correct import creates
+t10_convs = {}       # marker -> [[mailbox, customer_email, subject], ...] of the conversations it opens
+AGENTS = [f"agent{n}@helpdesk.example" for n in range(1, 6)] + ["agent6.alt@helpdesk.example"]
+NAMES10 = [n for n in NAMES if "@" not in n]
+FWD_PREFIX = ["Fwd: ", "FW: ", "Fw: ", "WG: ", "TR: ", "FWD: "]
+def w10(lo, hi): return " ".join(rnd10.choice(WORDS) for _ in range(rnd10.randint(lo, hi)))
+def pool10(): return f"cust{rnd10.randint(1, 300)}@example.org" if rnd10.random() < .7 else f"colleague{rnd10.randint(1, 80)}@partner.example"
+def t10acct(kind, convs, threads, atts=0, sizes=()):
+    m = t10.setdefault(kind, [0, 0]); m[0] += convs; m[1] += threads
+    exp["conversations"] += convs; exp["threads"] += threads; exp["attachments"] += atts; att_sizes.extend(sizes)
+def t10conv(marker, mailbox, cust, subj): t10_convs.setdefault(marker, []).append([mailbox, cust.lower(), subj])
+def agent10():
+    a = rnd10.choice(AGENTS)
+    if rnd10.random() < .1: a = a.title()      # Agent1@Helpdesk.Example: sanitizeEmail() lower-cases
+    return email.utils.formataddr(("Agent " + a[5:6], a)) if rnd10.random() < .5 else a
+def t_alt(h, txt, htm):
+    b = f"----=_Alt_{rnd10.randint(10**5, 10**6)}_{rnd10.randint(10**8, 10**9)}"
+    return "\n".join(h) + f'\nContent-Type: multipart/alternative; boundary="{b}"\n\n--{b}\nContent-Type: text/plain; charset=utf-8\nContent-Transfer-Encoding: 8bit\n\n{txt}\n--{b}\nContent-Type: text/html; charset=utf-8\nContent-Transfer-Encoding: 8bit\n\n{htm}\n--{b}--\n'
+def fwd_body(cmd, style, oname, oaddr, osubj, u, older):
+    """forwarded mail body -> (text, html); html is None for the plain text style. oaddr is the first address after the command"""
+    date = email.utils.formatdate(time.time() - rnd10.randint(86400, 20 * 86400))
+    inner = w10(8, 60)
+    nm = f"{oname} " if oname else ""
+    txt = f"{cmd}\n\n---------- Forwarded message ---------\nFrom: {nm}<{oaddr}>\nDate: {date}\nSubject: {osubj}\nTo: Support <{u}>\n\n{inner}\n"
+    if older: txt += f"\n> Begin forwarded message:\n> From: {older[0]} <{older[1]}>\n> Subject: older\n"
+    if style == "text": return txt, None
+    e = htmllib.escape(oname or "", quote=False)
+    if style == "gmail":
+        htm = (f'<div dir="ltr">{cmd}<br><br><div class="gmail_quote"><div dir="ltr" class="gmail_attr">---------- Forwarded message ---------<br>From: <strong class="gmail_sendername" dir="auto">{e}</strong> '
+               f'<span dir="auto">&lt;<a href="mailto:{oaddr}">{oaddr}</a>&gt;</span><br>Date: {date}<br>Subject: {osubj}<br>To: &lt;<a href="mailto:{u}">{u}</a>&gt;<br></div><br><br><div>{inner}</div></div></div>')
+    elif style == "outlook":
+        htm = (f'<div>{cmd}</div><hr style="display:inline-block;width:98%" tabindex="-1"><div id="divRplyFwdMsg" dir="ltr"><font face="Calibri, sans-serif" style="font-size:11pt" color="#000000">'
+               f'<b>From:</b> {e} &lt;{oaddr}&gt;<br><b>Sent:</b> {date}<br><b>To:</b> {u}<br><b>Subject:</b> {osubj}</font><div>&nbsp;</div></div><div>{inner}</div>')
+    else:
+        htm = (f'<div>{cmd}</div><div><br><blockquote type="cite"><div>Begin forwarded message:</div><br><div style="margin:0px"><b>From:</b> {e} &lt;<a href="mailto:{oaddr}">{oaddr}</a>&gt;<br></div>'
+               f'<div><b>Subject:</b> {osubj}</div><br><div>{inner}</div></blockquote></div>')
+    if older: htm = htm.replace(f"<div>{inner}</div>", f"<div>{inner}</div><div>Begin forwarded message:<br>From: {older[0]} &lt;<a href=\"mailto:{older[1]}\">{older[1]}</a>&gt;</div>", 1)
+    return txt, "<html><body>" + htm + "</body></html>"
+def theme10(i, j, u, room, write, tickets):
+    """one event of the theme written into mailbox i (selffan also queues copies); -> slots used in mailbox i, 0 if it does not fit"""
+    kind = rnd10.choices(list(T10), list(T10.values()))[0]
+    if not tickets and kind in ("selfreply", "agentdirect"): kind = "agentnew"
+    now = time.time()
+    ts = now - rnd10.randint(600, 3 * 86400)
+    marker = f"T10-{i}-{j}"
+    subj0 = f"{rnd10.choice(WORDS)} {marker}"
+    xk = f"t10-{kind}"
+    addr = lambda hdr: email.utils.parseaddr(hdr)[1]
+    if kind.startswith("fwd"):
+        agent = agent10()
+        orig, oname = pool10(), rnd10.choice(NAMES10)
+        older = (rnd10.choice(NAMES10) or "Older Sender", pool10()) if rnd10.random() < .25 else None
+        prefix = rnd10.choice(FWD_PREFIX)
+        cmd = rnd10.choice(["@fwd", "@fwd", "@FWD"]) if kind != "fwdnocmd" else ""
+        to, extra, frm = u, [], agent
+        if kind == "fwdnouser": frm = pool10()
+        if kind == "fwdcmd" and rnd10.random() < .1: to = f"alias{i}@test.local"
+        if kind == "fwdcmd" and rnd10.random() < .12: frm = "agent6.alt@helpdesk.example"
+        if kind == "fwdcc":
+            if rnd10.random() < .5: to = f"{u}, {pool10()}"
+            else: extra = ["Cc: " + pool10()]
+        h = m_hdr(xk, f"<t10-{kind}{i}-{j}@helpdesk.example>", ts, frm, to, prefix + subj0, extra)
+        if kind == "fwdatt":
+            orig_msg = f"Message-ID: <out{i}-{j}@orig.example>\nFrom: {oname} <{orig}>\nTo: <{u}>\nSubject: {subj0}\nDate: {email.utils.formatdate(ts - 600)}\nMIME-Version: 1.0\nContent-Type: text/plain; charset=utf-8\n\n{body_text()}"
+            b = f"----=_Fwd_{rnd10.randint(10**5, 10**6)}"
+            raw = ("\n".join(h) + f'\nContent-Type: multipart/mixed; boundary="{b}"\n\n--{b}\nContent-Type: text/plain; charset=utf-8\n\n{cmd}\n\nPlease see attached.\n--{b}\n'
+                   f"Content-Description: Forwarded Message\nContent-Type: message/rfc822\nContent-Transfer-Encoding: 8bit\n\n{orig_msg}\n--{b}--\n")
+            write(raw, ts)
+            note(frm, to); t10conv(marker, u, addr(frm), prefix + subj0); t10acct(kind, 1, 1, 1, [len(orig_msg.strip(" \t\n\r\0\x0b").replace("\n", "\r\n").encode())])   # bytes: the display name may be non-ASCII
+            return 1
+        if kind == "fwdnoaddr": txt, htm = f"{cmd}\n\nPlease take care of this, thanks.\n", None
+        else: txt, htm = fwd_body(cmd, rnd10.choice(["text", "text", "gmail", "outlook", "apple"]), oname, orig, subj0, u, older)
+        raw = t_alt(h, txt, htm) if htm and rnd10.random() < .5 else m_text(h, htm, "text/html; charset=utf-8", "8bit") if htm else m_text(h, txt, "text/plain; charset=utf-8", "8bit")
+        write(raw, ts); used = 1
+        if kind == "fwdcmd" and room > 1 and rnd10.random() < .12: write(raw, ts); used = 2      # redelivered byte for byte
+        subst = kind == "fwdcmd"
+        note(frm, to, *([orig] if subst else []), *[x[4:] for x in extra])
+        t10conv(marker, u, orig if subst else addr(frm), subj0 if subst else prefix + subj0); t10acct(kind, 1, 1)
+        return used
+    if kind in ("selfmail", "agentnew", "agbadhash"):
+        if kind == "selfmail":
+            frm = rnd10.choice([u, u, f"alias{i}@test.local", email.utils.formataddr((f"MB{i} Support", u))])
+            to, extra = u, ["Cc: " + pool10()] if rnd10.random() < .3 else []
+            h = m_hdr(xk, f"<t10-self{i}-{j}@gen.test>", ts, frm, to, subj0, extra)
+            write(m_text(h, w10(8, 80) + "\n"), ts)
+            note(frm, to, *[x[4:] for x in extra]); t10conv(marker, u, addr(frm), subj0); t10acct(kind, 1, 1)
+            return 1
+        if kind == "agentnew":
+            frm = agent10()
+            write(m_text(m_hdr(xk, f"<t10-new{i}-{j}@helpdesk.example>", ts, frm, u, subj0), w10(8, 60) + "\n"), ts)
+            note(frm, u); t10conv(marker, u, addr(frm), subj0); t10acct(kind, 1, 1)
+            return 1
+        tid, uid = rnd10.randint(1, 200000), rnd10.randint(1, 6)
+        hl = rnd10.choices([16, 8, 32], [6, 2, 2])[0]
+        nid = f"<FS_notify-{tid}-{uid}-{''.join(rnd10.choice('0123456789abcdef') for _ in range(hl))}@helpdesk.example>"
+        h = m_hdr(xk, f"<t10-bad{i}-{j}@helpdesk.example>", ts, agent10(), u, "Re: [#" + str(rnd10.randint(1, 9999)) + "] " + subj0, [f"In-Reply-To: {nid}", f"References: {nid}"])
+        write(m_text(h, w10(8, 60) + "\n"), ts); t10acct(kind, 0, 0)       # dropped before createCustomers(): no note()
+        return 1
+    if kind in ("selfreply", "agentdirect"):
+        mid0, _, subj, pts, _, from_hdr = rnd10.choice(tickets)
+        ts = pts + rnd10.randint(5, max(5, min(3600, int(now - pts) - 2)))
+        cust = addr(from_hdr)
+        if kind == "selfreply":
+            frm = rnd10.choice([u, f"alias{i}@test.local", email.utils.formataddr((f"MB{i} Support", u))]); to, extra = cust, [f"Cc: {u}"]
+        else:
+            frm = agent10(); to, extra = rnd10.choice([u, cust]), ([f"Cc: {u}"] if rnd10.random() < .3 else [])
+        h = m_hdr(xk, f"<t10-{kind}{i}-{j}@gen.test>", ts, frm, to, "Re: " + subj, extra + [f"In-Reply-To: {mid0}", f"References: {mid0}"])
+        write(m_text(h, w10(8, 60) + "\n"), ts)
+        note(frm, to, *[x[4:] for x in extra]); t10acct(kind, 0, 1)
+        return 1
+    if kind == "selffan":
+        cap = max(1, M // 10)
+        later = [x for x in range(i + 1, N + 1) if len(pending.get(x, [])) + 1 <= cap]
+        if not later: return 0
+        S = [i] + sorted(rnd10.sample(later, min(rnd10.choice([1, 1, 2]), len(later))))
+        frm = rnd10.choice([u, email.utils.formataddr((f"MB{i} Support", u))])
+        to = ", ".join(f"mb{x}@test.local" for x in S)
+        h = m_hdr(xk, f"<t10-fan{i}-{j}@gen.test>", ts, frm, to, subj0)
+        raw = m_text(h, w10(8, 80) + "\n")
+        write(raw, ts)
+        for x in S[1:]: pending.setdefault(x, []).append((raw, ts))
+        note(frm, to)
+        for x in S: t10conv(marker, f"mb{x}@test.local", u, subj0)
+        t10acct(kind, len(S), len(S))
+        return 1
+    # dupidhdr / dupidbody: one new ticket whose Message-ID is used twice in this mailbox
+    if room < 2: return 0
+    cust = pool10(); frm = f"Customer {cust.split('@')[0]} <{cust}>"
+    mid = f"<t10-dup{i}-{j}@gen.test>"
+    body = w10(8, 80) + "\n"
+    a = m_text(m_hdr(xk, mid, ts, frm, u, subj0), body)
+    if kind == "dupidbody":
+        b = m_text(m_hdr(xk, mid, ts, frm, u, subj0), body + "second delivery, same headers\n")
+    elif rnd10.random() < .5:       # same Date and body, the second route added headers
+        h = m_hdr(xk, mid, ts, frm, u, subj0, [f"Delivered-To: {u}", "Received: from mx2.gen.test (mx2.gen.test [10.0.0.2]) by mx1.gen.test (Postfix) with ESMTP id " + "".join(rnd10.choice("ABCDEF0123456789") for _ in range(10))])
+        b = m_text(h, body)
+    else:                           # other Date, other body
+        ts2 = ts + rnd10.randint(1, max(1, min(3600, int(now - ts) - 2)))
+        b = m_text(m_hdr(xk, mid, ts2, frm, u, subj0), body + "resent\n")
+    write(a, ts); write(b, ts); used = 2
+    if kind == "dupidhdr" and room > 2 and rnd10.random() < .3: write(b, ts); used = 3        # the second variant redelivered byte for byte
+    note(frm, u)
+    for _ in range(2 if kind == "dupidhdr" else 1): t10conv(marker, u, cust, subj0)
+    t10acct(kind, 2 if kind == "dupidhdr" else 1, 2 if kind == "dupidhdr" else 1)
+    return used
+
 # one bulk sender per ~40 mails; the dates are shared by all mailboxes (a few seconds apart), so mailboxes fetched in parallel meet the sender at the same time
 bursts = []
 if V >= 8 and N >= 2:
@@ -719,6 +893,9 @@ for i in range(1, N + 1):
             if used: bcast.pop(0); j += used; continue
         if V >= 9 and rnd9.random() < .09:
             used = machine(i, j, u, M - j - len(pending.get(i, [])) - len(bq), write, tickets)
+            if used: j += used; continue
+        if V >= 10 and rnd10.random() < .08:
+            used = theme10(i, j, u, M - j - len(pending.get(i, [])) - len(bq), write, tickets)
             if used: j += used; continue
         if V >= 7 and rnd7.random() < .06:
             mts = time.time() - rnd7.randint(600, 3 * 86400)
@@ -798,6 +975,7 @@ if V >= 5: exp.update(exp_extra, attachment_sizes=sorted(att_sizes))
 if V >= 7: exp.update(malformed_counts=mal_counts)
 if V >= 8: exp.update(exp8, fan_groups=fan_groups, fan_kinds=fan_kinds, burst_senders=burst_exp)
 if V >= 9: exp.update(machine_kinds=mach, list_groups=list_groups)
+if V >= 10: exp.update(t10_kinds=t10, t10_convs={k: sorted(v) for k, v in t10_convs.items()})
 if V >= 6: exp.update(exp6, long_thread_sizes=sorted(long_sizes, reverse=True), min_huge_len=min(huge_lens) if huge_lens else 0, quote_checks=quote_checks)
 open(os.path.join(os.path.dirname(OUT), "users"), "w").write("".join(f"{u}:{{PLAIN}}pw::::::\n" for u in users))
 json.dump(exp, open(os.path.join(os.path.dirname(OUT), "expected.json"), "w"))

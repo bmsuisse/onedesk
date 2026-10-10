@@ -161,6 +161,48 @@ if (!empty($exp['list_groups'])) {
     }
     if ($bad) { $fail[] = count($bad).' of '.count($exp['list_groups']).' mailing-list threads wrong [mailbox [convs,threads]] (e.g. '.implode(' | ', array_slice($bad, 0, 3)).')'; fwrite(STDERR, "list detail:\n  ".implode("\n  ", $bad)."\n"); }
 }
+// V>=10 theme (forwards / @fwd, mails from a mailbox address, same Message-ID twice, agents writing by email): per kind (header X-E2E-Kind: [t10-<kind>]) the conversations opened and threads
+// added, and per marker T10-<i>-<j> the (mailbox, customer_email, subject) of every conversation: @fwd replaces sender and subject, other forwards keep the forwarder and "Fwd:", dropped mails
+// (invalid notification hash) leave nothing behind. Nothing of this theme is a bounce.
+if (!empty($exp['t10_kinds'])) {
+    $bad = [];
+    foreach ($exp['t10_kinds'] as $kind => list($eConv, $eThr)) {
+        $like = '%X-E2E-Kind: [t10-'.$kind.']%';
+        $gConv = DB::table('threads')->where('first', 1)->where('headers', 'like', $like)->count();
+        $gThr = DB::table('threads')->where('headers', 'like', $like)->count();
+        if ($gConv !== $eConv || $gThr !== $eThr) $bad[] = "$kind [convs,threads] [$gConv,$gThr] != [$eConv,$eThr]";
+    }
+    $flag = DB::table('threads')->where('headers', 'like', '%X-E2E-Kind: [t10-%')->where('send_status_data', 'like', '%"is_bounce":true%')->count();
+    if ($flag) $bad[] = "$flag t10 threads flagged is_bounce";
+    $got = [];
+    foreach (DB::table('conversations')->join('mailboxes', 'mailboxes.id', '=', 'conversations.mailbox_id')->where('conversations.subject', 'like', '%T10-%')
+        ->select('conversations.subject', 'conversations.customer_email', 'mailboxes.email')->get() as $r) {
+        if (preg_match('/T10-(\d+-\d+)/', $r->subject, $m)) $got['T10-'.$m[1]][] = [$r->email, $r->customer_email, $r->subject];
+    }
+    $badm = [];
+    foreach ($exp['t10_convs'] + array_fill_keys(array_keys($got), []) as $marker => $rows) {
+        $g = $got[$marker] ?? []; sort($g); $e = $exp['t10_convs'][$marker] ?? []; sort($e);
+        if ($g !== $e) $badm[] = $marker.' got '.json_encode($g).' != '.json_encode($e);
+    }
+    if ($badm) { $bad[] = count($badm).' of '.count($exp['t10_convs']).' t10 markers wrong [mailbox, customer_email, subject] (e.g. '.implode(' | ', array_slice($badm, 0, 3)).')'; fwrite(STDERR, "t10 detail:\n  ".implode("\n  ", $badm)."\n"); }
+    if ($bad) $fail[] = 'forward/self/agent mail: '.implode('; ', $bad);
+}
+// Two-phase case agentreply: agents answered notifications by email. Replies with a valid hash become message threads (created_by_user_id = the agent) of the conversation they replied to,
+// a forwarded notification into another mailbox opens a conversation, an invalid hash leaves nothing.
+if (!empty($exp['agent_reply_checks'])) {
+    $bad = [];
+    foreach ($exp['agent_reply_checks'] as list($mid, $convId, $userId, $type)) {
+        $t = DB::table('threads')->where('message_id', $mid)->first();
+        if ($type === 'none') { if ($t) $bad[] = "$mid imported although dropped"; continue; }
+        if (!$t) { $bad[] = "$mid missing"; continue; }
+        if ($type === 'reply' && ((int) $t->conversation_id !== $convId || (int) $t->type !== App\Thread::TYPE_MESSAGE || (int) $t->created_by_user_id !== $userId)) $bad[] = "$mid: conv {$t->conversation_id}/type {$t->type}/user {$t->created_by_user_id} != $convId/message/$userId";
+        if ($type === 'fwd' && ((int) $t->conversation_id === $convId || (int) $t->type !== App\Thread::TYPE_CUSTOMER || (int) $t->first !== 1)) $bad[] = "$mid: forwarded notification should open a new conversation (conv {$t->conversation_id}, type {$t->type}, first {$t->first})";
+    }
+    $nMsg = DB::table('threads')->where('type', App\Thread::TYPE_MESSAGE)->count();
+    $eMsg = count(array_filter($exp['agent_reply_checks'], function ($c) { return $c[3] === 'reply'; }));
+    if ($nMsg !== $eMsg) $bad[] = "$nMsg agent message threads != expected $eMsg";
+    if ($bad) $fail[] = count($bad).' agent-reply problems (e.g. '.implode('; ', array_slice($bad, 0, 4)).')';
+}
 if ($dupMsg) $fail[] = "$dupMsg duplicated message_id values in threads";
 if ($dupMail) $fail[] = "$dupMail duplicated customer emails";
 if ($orphans) $fail[] = "$orphans conversations without customer";
