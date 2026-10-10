@@ -199,32 +199,67 @@ class SettingsController extends Controller
 
         switch ($section) {
             case 'general':
+                $options = Option::getOptions([
+                    'company_name',
+                    'next_ticket',
+                    'email_branding',
+                    'open_tracking',
+                    'enrich_customer_data',
+                    'time_format',
+                ], [
+                    'company_name' => \Config::get('app.name'),
+                    'time_format'  => User::TIME_FORMAT_24,
+                ]);
+                $min_next_ticket = Conversation::max('number') + 1;
                 $settings = [
-                    'company_name'         => Option::get('company_name', \Config::get('app.name')),
-                    'next_ticket'          => (Option::get('next_ticket') >= Conversation::max('number') + 1) ? Option::get('next_ticket') : Conversation::max('number') + 1,
+                    'company_name'         => $options['company_name'],
+                    'next_ticket'          => ($options['next_ticket'] >= $min_next_ticket) ? $options['next_ticket'] : $min_next_ticket,
                     'custom_number'        => (int)config('app.custom_number'),
                     'user_permissions'     => User::getGlobalUserPermissions(),
                     'limit_user_customer_visibility' => (int)config('app.limit_user_customer_visibility'),
-                    'email_branding'       => Option::get('email_branding'),
-                    'open_tracking'        => Option::get('open_tracking'),
+                    'email_branding'       => $options['email_branding'],
+                    'open_tracking'        => $options['open_tracking'],
                     'email_conv_history'   => config('app.email_conv_history'),
                     'max_message_size'     => config('app.max_message_size'),
                     'email_user_history'   => config('app.email_user_history'),
-                    'enrich_customer_data' => Option::get('enrich_customer_data'),
-                    'time_format'          => Option::get('time_format', User::TIME_FORMAT_24),
+                    'enrich_customer_data' => $options['enrich_customer_data'],
+                    'time_format'          => $options['time_format'],
                     'locale'               => \Helper::getRealAppLocale(),
                     'timezone'             => config('app.timezone'),
                 ];
                 break;
             case 'emails':
+                $mail_defaults = [
+                    'mail_driver'     => \Config::get('mail.driver'),
+                    'mail_host'       => \Config::get('mail.host'),
+                    'mail_port'       => \Config::get('mail.port'),
+                    'mail_username'   => \Config::get('mail.username'),
+                    'mail_password'   => \Config::get('mail.password'),
+                    'mail_encryption' => \Config::get('mail.encryption'),
+                ];
+                $options = Option::getOptions([
+                    'mail_from',
+                    'mail_driver',
+                    'mail_host',
+                    'mail_port',
+                    'mail_username',
+                    'mail_password',
+                    'mail_encryption',
+                ], $mail_defaults);
+                // getOptions() treats a null default as unset (-> false).
+                foreach ($mail_defaults as $name => $default) {
+                    if ($default === null && $options[$name] === false) {
+                        $options[$name] = null;
+                    }
+                }
                 $settings = [
-                    'mail_from'       => \App\Misc\Mail::getSystemMailFrom(),
-                    'mail_driver'     => Option::get('mail_driver', \Config::get('mail.driver')),
-                    'mail_host'       => Option::get('mail_host', \Config::get('mail.host')),
-                    'mail_port'       => Option::get('mail_port', \Config::get('mail.port')),
-                    'mail_username'   => Option::get('mail_username', \Config::get('mail.username')),
-                    'mail_password'   => \Helper::decrypt(Option::get('mail_password', \Config::get('mail.password'))),
-                    'mail_encryption' => Option::get('mail_encryption', \Config::get('mail.encryption')),
+                    'mail_from'       => $options['mail_from'] ?: 'freescout@'.\Helper::getDomain(),
+                    'mail_driver'     => $options['mail_driver'],
+                    'mail_host'       => $options['mail_host'],
+                    'mail_port'       => $options['mail_port'],
+                    'mail_username'   => $options['mail_username'],
+                    'mail_password'   => \Helper::decrypt($options['mail_password']),
+                    'mail_encryption' => $options['mail_encryption'],
                     'fetch_schedule'  => config('app.fetch_schedule'),
                     //'use_mail_date_on_fetching'             => config('app.use_mail_date_on_fetching'),
                 ];
