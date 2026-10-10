@@ -505,6 +505,8 @@ class FetchEmails extends Command
 
     public function processMessage($message, $message_id, $mailbox, $mailboxes, $extra = false, $attempt = 1)
     {
+        // Retry must start from the original arguments: below $message_id becomes artificial and $extra may flip.
+        $orig_args = [$message_id, $extra];
         try {
 
             // From - $from is the plain text email.
@@ -1240,7 +1242,7 @@ class FetchEmails extends Command
                 && ((int) ($e->errorInfo[1] ?? 0) === 1213 || ($e->errorInfo[0] ?? '') === '40001')
             ) {
                 usleep(random_int(50, 250) * 1000);
-                return $this->processMessage($message, $message_id, $mailbox, $mailboxes, $extra, $attempt + 1);
+                return $this->processMessage($message, $orig_args[0], $mailbox, $mailboxes, $orig_args[1], $attempt + 1);
             }
             $transient_db_error = $e instanceof \App\AttachmentWriteException
                 || $e instanceof \Illuminate\Database\QueryException
