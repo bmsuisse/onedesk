@@ -14,6 +14,6 @@ sql "SELECT m.email, c.id, REGEXP_SUBSTR(t.headers, '(?i)message-id: *<[^>]+>') 
   sql "SET FOREIGN_KEY_CHECKS=0; DELETE FROM attachments WHERE thread_id IN (SELECT id FROM threads WHERE conversation_id=$cid); DELETE FROM threads WHERE conversation_id=$cid; DELETE FROM conversations WHERE id=$cid; SET FOREIGN_KEY_CHECKS=1"
   docker exec odtest-imap doveadm expunge -u "$mb" mailbox INBOX header message-id "$mid" 2>&1 | head -2
 done
-for u in $(cut -d: -f1 $WORK/users); do docker exec odtest-imap doveadm flags remove -u "$u" '\Seen' all 2>&1 | head -2; done
+for u in $(cut -d: -f1 $WORK/users); do docker exec odtest-imap doveadm flags remove -u "$u" '\Seen' not header X-E2E-Kind seen 2>&1 | head -2; done
 run
 exit 0

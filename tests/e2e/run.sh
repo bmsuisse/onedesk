@@ -66,16 +66,16 @@ check() { alive || return 1; php_env odtest-php php /app/tests/e2e/check.php /tm
 
 case_run() {  # name -> prints PASS/FAIL, returns 1 on failure
   local c=$1; load; step "case $c ($N mailboxes x $M mails)"; fresh
-  local t0=$(date +%s)
+  local t0=$(date +%s) SF=0
   case $c in
     A) fetch;;                                                         # sequential, all in one run
     B) PAR=${PAR:-4} fetch;;                                           # parallel mailboxes; PAR max 4 (8 OOMs the shared 8GB docker VM)
     C) php_env odtest-php timeout 3 php artisan freescout:fetch-emails --days=7 >/dev/null 2>&1 || true; fetch;;   # killed mid-run, resumed
     D) fetch; fetch;;                                                  # idempotent second run
-    *) if [ -x "$HERE/cases/$c.sh" ]; then "$HERE/cases/$c.sh"; else echo "unknown case $c"; return 2; fi;;
+    *) if [ -x "$HERE/cases/$c.sh" ]; then "$HERE/cases/$c.sh" || SF=1; else echo "unknown case $c"; return 2; fi;;
   esac
   echo "elapsed $(( $(date +%s) - t0 ))s"
-  check && echo "PASS $c" || { echo "FAIL $c"; return 1; }
+  check && [ $SF = 0 ] && echo "PASS $c" || { echo "FAIL $c"; return 1; }
 }
 
 bench() {  # fresh + one fetch with metrics

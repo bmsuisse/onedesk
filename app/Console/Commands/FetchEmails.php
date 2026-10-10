@@ -547,6 +547,9 @@ class FetchEmails extends Command
 
     public function processMessage($message, $message_id, $mailbox, $mailboxes, $extra = false, $attempt = 1)
     {
+        // $extra may be switched on below for a mail that is this mailbox's own IMAP mail: only a call made for a sibling copy ($copy) leaves the mail unseen.
+        $copy = $extra;
+
         try {
 
             // From - $from is the plain text email.
@@ -666,7 +669,7 @@ class FetchEmails extends Command
                     }
                 }
                 // An extra copy never marks the mail Seen: only the outermost call does, after all copies are done.
-                if ($all_copies_done && !$extra) {
+                if ($all_copies_done && !$copy) {
                     $this->setSeen($message, $mailbox);
                 }
                 return;
@@ -1256,7 +1259,7 @@ class FetchEmails extends Command
 
                 if (!$all_copies_done) {
                     $this->logError('Copy for another mailbox failed, message kept unseen to retry on the next run');
-                } elseif (!$extra) {
+                } elseif (!$copy) {
                     // An extra copy leaves the mail unseen: the outermost call marks it after all copies are done.
                     $this->setSeen($message, $mailbox);
                 }
@@ -1279,7 +1282,7 @@ class FetchEmails extends Command
                 && ((int) ($e->errorInfo[1] ?? 0) === 1213 || ($e->errorInfo[0] ?? '') === '40001')
             ) {
                 usleep(random_int(50, 250) * 1000);
-                return $this->processMessage($message, $message_id, $mailbox, $mailboxes, $extra, $attempt + 1);
+                return $this->processMessage($message, $message_id, $mailbox, $mailboxes, $copy, $attempt + 1);
             }
             $transient_db_error = $e instanceof \App\AttachmentWriteException
                 || $e instanceof \Illuminate\Database\QueryException
@@ -1291,7 +1294,7 @@ class FetchEmails extends Command
                     // Only the threads.message_id key counts, other unique keys are deterministic.
                     || (!$extra && (int) ($e->errorInfo[1] ?? 0) === 1062
                         && strpos((string) ($e->errorInfo[2] ?? ''), 'threads_message_id_index') !== false));
-            if (!$transient_db_error && !$extra) {
+            if (!$transient_db_error && !$copy) {
                 // A flag failure must stay per-message: the original error is still logged below and the folder goes on.
                 try {
                     $this->setSeen($message, $mailbox);

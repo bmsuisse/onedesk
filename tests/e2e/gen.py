@@ -20,6 +20,7 @@ rnd7 = random.Random(SEED + 4000)  # theme "malformed MIME" (V>=7) draws only fr
 rnd8 = random.Random(SEED + 5000)  # theme "one mail to several mailboxes / same sender in all mailboxes" (V>=8) draws only from this one
 rnd9 = random.Random(SEED + 6000)  # theme "machine mail" (V>=9) draws only from this one
 rnd10 = random.Random(SEED + 7000)  # theme "forwards / @fwd, mails from a mailbox address, helpdesk agents writing by email" (V>=10) draws only from this one
+rnd11 = random.Random(SEED + 8000)  # theme "several IMAP folders / flags / sent copies" (V>=11) draws only from this one
 WORDS = "invoice order delivery refund login password account billing shipping error crash update contact support".split()
 SUBJECTS_NONASCII = ["Rechnung für Bestellung", "Réclamation commande", "Wiederholte Störung — bitte prüfen", "注文について"]
 os.makedirs(OUT, exist_ok=True)
@@ -842,6 +843,118 @@ def theme10(i, j, u, room, write, tickets):
     t10acct(kind, 2 if kind == "dupidhdr" else 1, 2 if kind == "dupidhdr" else 1)
     return used
 
+
+# V>=11 theme: several IMAP folders per mailbox (in_imap_folders, set by seed.php by the same rule as folders_of() here), mails that are already \Seen mixed with unseen ones,
+# flagged / answered / draft / deleted-flagged mails and sent-folder copies. Every mail carries "X-E2E-Kind: [t11-<kind>]"; check.php counts conversations/threads per kind.
+# Semantics, from fetchFolders()/processMessage(): the search is UNSEEN SINCE per configured folder, in configured order (INBOX first); every folder imports into the SAME mailbox. Nothing
+# looks at \Flagged/\Answered/\Draft/\Deleted: an unseen mail is imported whatever else it carries (finding to report if this is not wanted: "trashed" mails, flagged \Deleted but not yet
+# expunged, are imported). A \Seen mail is never fetched. A configured folder that does not exist on the server ("Gone") is logged and skipped, INBOX and the others are still imported.
+# After the import the mail is \Seen, other flags stay (cases/folders.sh checks that with doveadm).
+#   seenold     \Seen (maybe also F/R) mail in INBOX: not imported                         seenreply  \Seen reply to a ticket of INBOX: not imported, ticket unaffected
+#   flagged     unseen with F/R/FR/D: imported                                              trashed    unseen with \Deleted (T): imported (see above)
+#   archticket  unseen ticket in an extra folder: imported into the mailbox               archseen   \Seen mail in an extra folder (archives are mostly read): not imported
+#   archreply   unseen reply in an extra folder to a ticket of INBOX: INBOX is fetched first -> +1 thread in the ticket's conversation
+#   pairearly   ticket in an extra folder, its reply (In-Reply-To) in INBOX: INBOX is fetched first, the reply finds no ticket -> its own conversation, then the ticket -> 2 conversations
+#   dupfolder   byte-identical mail unseen in INBOX and in an extra folder (labels / copy): imported once (same Message-ID, same headers = duplicate)
+#   sentcopy    unseen copy in "Sent": From = mailbox / alias, To = customer, In-Reply-To of a ticket: customer-type thread in that conversation (like t10 selfreply): +1 thread
+#   sentnew     unseen copy in "Sent" of a new outgoing mail: new conversation (customer = the mailbox address, like selfmail)
+#   sentseen    \Seen copy in "Sent" (what every mail client writes): not imported
+T11_ANY = {"seenold": 14, "seenreply": 5, "flagged": 10, "trashed": 3}
+T11_ARCH = {"archticket": 12, "archseen": 16, "archreply": 7, "pairearly": 4, "dupfolder": 6}
+T11_SENT = {"sentcopy": 10, "sentnew": 4, "sentseen": 14}
+t11 = {}             # kind -> [conversations, threads] a correct import creates
+t11_flags = {"flagged": 0, "answered": 0, "deleted": 0, "draft": 0}   # mails in all folders carrying these flags (cases/folders.sh: they must survive the import)
+t11_mails = {"unseen_total": 0, "seen_total": 0}
+def folders_of(i):
+    """folders (besides INBOX) of mailbox i that exist on the server; the configured list also holds "Gone" before "Zürich" (seed.php uses the same rule)"""
+    return (["Archive"] if i % 3 == 0 else []) + (["Sent"] if i % 4 == 0 else []) + (["Zürich"] if i % 7 == 0 else [])
+def utf7(name):
+    """modified UTF-7 of Maildir++ folder directory names: "Zürich" -> "Z&APw-rich" """
+    out, buf = "", ""
+    def flush():
+        nonlocal out, buf
+        if buf: out += "&" + base64.b64encode(buf.encode("utf-16-be")).decode().rstrip("=").replace("/", ",") + "-"; buf = ""
+    for ch in name:
+        if 0x20 <= ord(ch) <= 0x7e:
+            flush(); out += "&-" if ch == "&" else ch
+        else: buf += ch
+    flush()
+    return out
+def w11(lo, hi): return " ".join(rnd11.choice(WORDS) for _ in range(rnd11.randint(lo, hi)))
+def pool11(): return f"cust{rnd11.randint(1, 300)}@example.org" if rnd11.random() < .7 else f"colleague{rnd11.randint(1, 80)}@partner.example"
+def t11acct(kind, convs, threads):
+    m = t11.setdefault(kind, [0, 0]); m[0] += convs; m[1] += threads
+    exp["conversations"] += convs; exp["threads"] += threads
+def t11flags(fl):
+    for ch, k in (("F", "flagged"), ("R", "answered"), ("T", "deleted"), ("D", "draft")):
+        if ch in fl: t11_flags[k] += 1
+    t11_mails["seen_total" if "S" in fl else "unseen_total"] += 1
+def theme11(i, j, u, room, put, tickets, extras):
+    """one event of the theme in mailbox i; put(folder, raw, ts, flags) writes a mail into a folder (flags = Maildir flag letters, "" = unseen); -> slots used, 0 if it does not fit"""
+    kinds = dict(T11_ANY)
+    arch = [f for f in extras if f != "Sent"]
+    if arch: kinds.update(T11_ARCH)
+    if "Sent" in extras: kinds.update(T11_SENT)
+    kind = rnd11.choices(list(kinds), list(kinds.values()))[0]
+    if not tickets and kind in ("seenreply", "archreply", "sentcopy"): kind = "archticket" if arch else "seenold"
+    if kind in ("pairearly", "dupfolder") and room < 2: kind = "archticket"
+    now = time.time()
+    ts = now - rnd11.randint(600, 3 * 86400)
+    marker = f"T11-{i}-{j}"
+    subj0 = f"{rnd11.choice(WORDS)} {marker}"
+    xk = f"t11-{kind}"
+    cust = pool11(); frm = f"Customer {cust.split('@')[0]} <{cust}>"
+    mk = lambda tag, ts_, f, to, subj, extra=(): m_text(m_hdr(xk, f"<t11-{tag}{i}-{j}@gen.test>", ts_, f, to, subj, extra), w11(8, 80) + "\n")
+    def reply_to_ticket():
+        mid0, _, subj, pts, _, from_hdr = rnd11.choice(tickets)
+        return mid0, subj, from_hdr, pts + rnd11.randint(5, max(5, min(3600, int(now - pts) - 2)))
+    if kind in ("seenold", "flagged", "trashed"):
+        fl = rnd11.choice(["S", "S", "FS", "RS", "FRS"]) if kind == "seenold" else rnd11.choice(["F", "R", "FR", "D", "F"]) if kind == "flagged" else rnd11.choice(["T", "FT"])
+        put("INBOX", mk("a", ts, frm, u, subj0), ts, fl); t11flags(fl)
+        if kind == "seenold": t11acct(kind, 0, 0)
+        else: note(frm, u); t11acct(kind, 1, 1)
+        return 1
+    if kind == "seenreply":
+        mid0, subj, from_hdr, ts = reply_to_ticket()
+        put("INBOX", mk("a", ts, from_hdr, u, "Re: " + subj, [f"In-Reply-To: {mid0}", f"References: {mid0}"]), ts, "S"); t11flags("S"); t11acct(kind, 0, 0)
+        return 1
+    if kind in ("archticket", "archseen"):
+        fl = "S" if kind == "archseen" else rnd11.choice(["", "", "", "", "F"])
+        put(rnd11.choice(arch), mk("a", ts, frm, u, subj0), ts, fl); t11flags(fl)
+        if kind == "archticket": note(frm, u); t11acct(kind, 1, 1)
+        else: t11acct(kind, 0, 0)
+        return 1
+    if kind == "archreply":
+        mid0, subj, from_hdr, ts = reply_to_ticket()
+        put(rnd11.choice(arch), mk("a", ts, from_hdr, u, "Re: " + subj, [f"In-Reply-To: {mid0}", f"References: {mid0}"]), ts, ""); t11flags("")
+        note(from_hdr, u); t11acct(kind, 0, 1)
+        return 1
+    if kind == "pairearly":
+        raw = mk("t", ts, frm, u, subj0)
+        ts2 = ts + rnd11.randint(5, max(5, min(3600, int(now - ts) - 2)))
+        raw2 = mk("r", ts2, frm, u, "Re: " + subj0, [f"In-Reply-To: <t11-t{i}-{j}@gen.test>", f"References: <t11-t{i}-{j}@gen.test>"])
+        put(rnd11.choice(arch), raw, ts, ""); put("INBOX", raw2, ts2, ""); t11flags(""); t11flags("")
+        note(frm, u); t11acct(kind, 2, 2)
+        return 2
+    if kind == "dupfolder":
+        raw = mk("a", ts, frm, u, subj0)
+        fl = rnd11.choice(["", "F"])
+        put("INBOX", raw, ts, ""); put(rnd11.choice(arch), raw, ts, fl); t11flags(""); t11flags(fl)
+        note(frm, u); t11acct(kind, 1, 1)
+        return 2
+    sent_from = rnd11.choice([u, f"alias{i}@test.local", email.utils.formataddr((f"MB{i} Support", u))])
+    if kind == "sentseen":
+        put("Sent", mk("a", ts, sent_from, cust, "Re: " + subj0), ts, "S"); t11flags("S"); t11acct(kind, 0, 0)
+        return 1
+    if kind == "sentnew":
+        put("Sent", mk("a", ts, sent_from, cust, subj0), ts, ""); t11flags("")
+        note(sent_from, cust); t11acct(kind, 1, 1)
+        return 1
+    mid0, subj, from_hdr, ts = reply_to_ticket()            # sentcopy
+    put("Sent", mk("a", ts, sent_from, email.utils.parseaddr(from_hdr)[1], "Re: " + subj, [f"In-Reply-To: {mid0}", f"References: {mid0}"]), ts, ""); t11flags("")
+    note(sent_from, from_hdr); t11acct(kind, 0, 1)
+    return 1
+
 # one bulk sender per ~40 mails; the dates are shared by all mailboxes (a few seconds apart), so mailboxes fetched in parallel meet the sender at the same time
 bursts = []
 if V >= 8 and N >= 2:
@@ -859,6 +972,15 @@ for i in range(1, N + 1):
         global seq
         seq += 1
         open(f"{d}/new/{int(ts)}.{i}_{seq}.gen", "w", encoding="utf-8", errors="surrogateescape").write(msg)
+    extras11 = folders_of(i) if V >= 11 else []
+    for f in extras11:
+        for sub in ("cur", "new", "tmp"): os.makedirs(f"{d}/.{utf7(f)}/{sub}", exist_ok=True)
+        open(f"{d}/.{utf7(f)}/maildirfolder", "w").close()
+    def put11(folder, msg, ts, flags=""):
+        global seq
+        seq += 1
+        base = d if folder == "INBOX" else f"{d}/.{utf7(folder)}"
+        open(f"{base}/{'cur' if flags else 'new'}/{int(ts)}.{i}_{seq}.gen" + (f":2,{flags}" if flags else ""), "w", encoding="utf-8", errors="surrogateescape").write(msg)
     j = 0
     plan = None           # V>=6: (position, replies) of this mailbox's one long thread
     if V >= 6 and M >= 40 and rnd6.random() < .4: plan = (rnd6.randint(0, M // 2), min(rnd6.randint(30, 45), M // 3))
@@ -896,6 +1018,9 @@ for i in range(1, N + 1):
             if used: j += used; continue
         if V >= 10 and rnd10.random() < .08:
             used = theme10(i, j, u, M - j - len(pending.get(i, [])) - len(bq), write, tickets)
+            if used: j += used; continue
+        if V >= 11 and rnd11.random() < (.12 if extras11 else .07):
+            used = theme11(i, j, u, M - j - len(pending.get(i, [])) - len(bq), put11, tickets, extras11)
             if used: j += used; continue
         if V >= 7 and rnd7.random() < .06:
             mts = time.time() - rnd7.randint(600, 3 * 86400)
@@ -976,6 +1101,7 @@ if V >= 7: exp.update(malformed_counts=mal_counts)
 if V >= 8: exp.update(exp8, fan_groups=fan_groups, fan_kinds=fan_kinds, burst_senders=burst_exp)
 if V >= 9: exp.update(machine_kinds=mach, list_groups=list_groups)
 if V >= 10: exp.update(t10_kinds=t10, t10_convs={k: sorted(v) for k, v in t10_convs.items()})
+if V >= 11: exp.update(t11_kinds=t11, t11_flags=t11_flags, t11_mails=t11_mails)
 if V >= 6: exp.update(exp6, long_thread_sizes=sorted(long_sizes, reverse=True), min_huge_len=min(huge_lens) if huge_lens else 0, quote_checks=quote_checks)
 open(os.path.join(os.path.dirname(OUT), "users"), "w").write("".join(f"{u}:{{PLAIN}}pw::::::\n" for u in users))
 json.dump(exp, open(os.path.join(os.path.dirname(OUT), "expected.json"), "w"))

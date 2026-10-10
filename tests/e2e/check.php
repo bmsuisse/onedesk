@@ -57,7 +57,7 @@ if (!empty($exp['long_thread_sizes'])) {
 }
 // Huge bodies (1-3MB html) are stored whole: DOM re-serialization of ASCII markup keeps the size (generous 10% margin), nothing else is that big.
 if (!empty($exp['huge_bodies'])) {
-    $big = DB::table('threads')->whereRaw('LENGTH(body) >= ?', [(int) ($exp['min_huge_len'] * 0.9)])->count();
+    $big = DB::table('threads')->whereRaw('LENGTH(body) >= ?', [(int) ($exp['min_huge_len'] * 0.9)])->where('message_id', 'not like', 'mch-%')->count();   // machine-mail bulk (theme 9) is sometimes huge too, and is not counted in huge_bodies
     if ($big !== $exp['huge_bodies']) $fail[] = "threads with a body >= 90% of the smallest generated huge body: $big != expected {$exp['huge_bodies']}";
 }
 // Reply separation: the stored body of a reply that quotes its predecessor behind a known separator holds its own text and none of the quoted tokens.
@@ -186,6 +186,18 @@ if (!empty($exp['t10_kinds'])) {
     }
     if ($badm) { $bad[] = count($badm).' of '.count($exp['t10_convs']).' t10 markers wrong [mailbox, customer_email, subject] (e.g. '.implode(' | ', array_slice($badm, 0, 3)).')'; fwrite(STDERR, "t10 detail:\n  ".implode("\n  ", $badm)."\n"); }
     if ($bad) $fail[] = 'forward/self/agent mail: '.implode('; ', $bad);
+}
+// V>=11 theme (several IMAP folders, \Seen mails mixed with unseen, flags, sent copies): per kind (header X-E2E-Kind: [t11-<kind>]) the conversations opened and threads added, see gen.py.
+// Already \Seen mails (INBOX, archive and sent folders) must leave nothing behind; flags other than \Seen never keep an unseen mail from being imported.
+if (!empty($exp['t11_kinds'])) {
+    $bad = [];
+    foreach ($exp['t11_kinds'] as $kind => list($eConv, $eThr)) {
+        $like = '%X-E2E-Kind: [t11-'.$kind.']%';
+        $gConv = DB::table('threads')->where('first', 1)->where('headers', 'like', $like)->count();
+        $gThr = DB::table('threads')->where('headers', 'like', $like)->count();
+        if ($gConv !== $eConv || $gThr !== $eThr) $bad[] = "$kind [convs,threads] [$gConv,$gThr] != [$eConv,$eThr]";
+    }
+    if ($bad) $fail[] = 'folders/flags: '.implode('; ', $bad);
 }
 // Two-phase case agentreply: agents answered notifications by email. Replies with a valid hash become message threads (created_by_user_id = the agent) of the conversation they replied to,
 // a forwarded notification into another mailbox opens a conversation, an invalid hash leaves nothing.

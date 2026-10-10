@@ -9,6 +9,9 @@ for ($i = 1; $i <= (int) $argv[1]; $i++) {
     $m->forceFill(['name' => "MB$i", 'email' => "mb$i@test.local", 'in_server' => getenv('E2E_IMAP_HOST'), 'in_port' => 143,
         'in_username' => "mb$i@test.local", 'in_protocol' => 1, 'in_encryption' => 1, 'in_validate_cert' => 0, 'out_method' => 1, 'aliases' => "alias$i@test.local"]);
     $m->in_password = 'pw';
+    // V>=11 theme: extra IMAP folders by the same rule as folders_of() in gen.py; "Gone" is configured but not on the server, "Zürich" needs the UTF-7 conversion. Missing folders are only logged.
+    $folders = array_merge(['INBOX'], $i % 3 == 0 ? ['Archive'] : [], $i % 4 == 0 ? ['Sent'] : [], $i % 7 == 0 ? ['Gone', 'Zürich'] : []);
+    if (count($folders) > 1) $m->in_imap_folders = json_encode($folders, JSON_UNESCAPED_UNICODE);
     $m->save();
 }
 echo App\Mailbox::count()." mailboxes\n";
