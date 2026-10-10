@@ -16,6 +16,7 @@ rnd = random.Random(SEED)
 rnd4 = random.Random(SEED + 1000)  # theme "recipients" (V>=4) draws only from this one, so V<4 output stays identical to earlier rounds
 rnd5 = random.Random(SEED + 2000)  # theme "attachments" (V>=5) draws only from this one
 rnd6 = random.Random(SEED + 3000)  # theme "long threads / huge bodies / quotes" (V>=6) draws only from this one
+rnd7 = random.Random(SEED + 4000)  # theme "malformed MIME" (V>=7) draws only from this one
 WORDS = "invoice order delivery refund login password account billing shipping error crash update contact support".split()
 SUBJECTS_NONASCII = ["Rechnung für Bestellung", "Réclamation commande", "Wiederholte Störung — bitte prüfen", "注文について"]
 os.makedirs(OUT, exist_ok=True)
@@ -217,6 +218,103 @@ def build_huge(mid, frm, to, subject, ts, extra=()):
     h = [f"Message-ID: {mid}", f"Date: {email.utils.formatdate(ts)}", f"From: {frm}", f"To: {to}", f"Subject: {subject}", "MIME-Version: 1.0"] + list(extra)
     return part_mime(h, "Please see the report below.\n", f"<html><body>{body}</body></html>")
 
+# V>=7 theme: malformed MIME. Every malformed mail is a stand-alone new ticket (never a reply target, never duplicated) with a marker
+# "MAL-<kind>-<i>-<j>" in its Subject, so check.php can tell which kind went missing. The import must not crash, lose OTHER mails or loop forever.
+# Expected outcome per kind, derived from processMessage()/Query::populate()/Structure/Header:
+#   imported (1 conversation + 1 thread), nothing else may change:
+#     nomid     no Message-ID header: Query::populate() builds fs-<md5(raw body . uid)>@<from domain> as key, so the mail is imported with that id
+#     charset   unknown/empty charset name in Content-Type: convertEncoding() falls back (iconv fails -> mb_convert_encoding in try/catch -> original bytes)
+#     baddate   unparsable, impossible, empty, absent or far-future Date: Header::parseDate() falls back to now(), processMessage() clamps future dates to now
+#     hdr8bit   raw UTF-8 / raw latin-1 bytes in Subject and From display name (no RFC 2047): the address still identifies the customer
+#     nulbody   NUL bytes in the body: Message::decodeString() strips them (#5292), so no stored body may contain one
+#     badcte    Content-Transfer-Encoding base64 on a non-base64 text / unknown encoding name: body is garbage or empty, but "we have to fetch absolutely all emails"
+#     badquote  Content-Type with unterminated quote / junk parameters
+#     emptybody headers only, or no blank line at all ("even with empty body")
+#     nobound   multipart/* without a boundary parameter: Structure::find_parts() throws "no content found" and the mail is dropped (finding: data loss)
+#     sameb     nested multipart reusing the boundary of its parent: must terminate and import (no attachments: only text parts)
+#     deepnest  30 levels of multipart/mixed with unrelated boundaries (X<random>), text body innermost: imported, no attachment
+#     prefixb   outer boundary "BND", inner multipart/alternative boundary "BND2" (RFC 2046 5.1.1: a delimiter line is "--" + the exact boundary, so
+#               "--BND2" does not delimit the outer multipart): text + html body, no attachment
+#     truncb64  attachment whose base64 is cut off mid-quantum, closing boundary present: stored with the bytes base64_decode() can recover
+#     noend     multipart/mixed without the closing "--boundary--": last part runs to the end of the message, attachment complete
+#   dropped (0 conversations):
+#     nofrom    no From (and no Reply-To): processMessage() logs "From is empty", sets Seen and returns
+MAL_KINDS = {"nomid": 8, "charset": 8, "baddate": 10, "hdr8bit": 10, "nulbody": 6, "badcte": 6, "badquote": 5, "emptybody": 5,
+             "nobound": 5, "sameb": 3, "deepnest": 3, "prefixb": 4, "truncb64": 10, "noend": 8, "nofrom": 5}
+mal_counts = {k: 0 for k in MAL_KINDS}      # conversations a correct import creates per kind
+def rbytes7(n): return rnd7.getrandbits(8 * n).to_bytes(n, 'big')
+def build_malformed(i, j, u, ts):
+    """-> (raw mail text, kind, attachment sizes, imported); also registers customers (note) of imported mails"""
+    kind = rnd7.choices(list(MAL_KINDS), list(MAL_KINDS.values()))[0]
+    cust = f"cust{rnd7.randint(1, 300)}@example.org"
+    frm = f"Customer {cust.split('@')[0]} <{cust}>"
+    subj = f"{rnd7.choice(WORDS)} MAL-{kind}-{i}-{j}"
+    date = email.utils.formatdate(ts)
+    h = {"Message-ID": f"<mal{i}-{j}@gen.test>", "Date": date, "From": frm, "To": u, "Subject": subj, "MIME-Version": "1.0"}
+    txt = "Hello,\n" + " ".join(rnd7.choice(WORDS) for _ in range(rnd7.randint(8, 80))) + "\n\nBest\n"
+    sizes, ct = [], "Content-Type: text/plain; charset=utf-8\nContent-Transfer-Encoding: 7bit"
+    body = txt
+    def hdrs(): return "\n".join(f"{k}: {v}" for k, v in h.items() if v is not None)
+    def att(b):
+        return att_part(name_hdrs("plain", "report.pdf"), "application/pdf", b)
+    if kind == "nomid": h["Message-ID"] = None
+    elif kind == "charset":
+        ct = f"Content-Type: text/plain; charset={rnd7.choice(['x-unknown-1', 'utf-9', 'windows-1299', '\"\"', 'bogus_charset', 'utf8mb4'])}\nContent-Transfer-Encoding: 8bit"
+        body = "Grüße, Straße éè 注文\n" + txt
+    elif kind == "baddate":
+        h["Date"] = rnd7.choice(["Not a date at all", "Thu, 32 Feb 2024 25:61:00 +0000", "", None, "Tue, 99 Foo 0000 00:00:00 XYZ", "Mon, 01 Jan 2099 00:00:00 +0000", "2024-13-45T99:99:99Z", "0"])
+    elif kind == "hdr8bit":
+        if rnd7.random() < .5: h["Subject"] = "Rechnung für Bestellung " + subj; h["From"] = f"Müller Hans <{cust}>"
+        else: h["Subject"] = "Gr\udcfc\udcdfe " + subj; h["From"] = f"M\udcfcller <{cust}>"      # raw latin-1 bytes (not valid UTF-8)
+        ct = "Content-Type: text/plain; charset=utf-8\nContent-Transfer-Encoding: 8bit"
+    elif kind == "nulbody":
+        body = "\n".join(l + ("\x00" * rnd7.randint(0, 3)) for l in txt.split("\n")) + "\x00\x00end\n"
+    elif kind == "badcte":
+        ct = f"Content-Type: text/plain; charset=utf-8\nContent-Transfer-Encoding: {rnd7.choice(['base64', 'x-uuencode', 'quoted-printable', 'bogus'])}"
+        body = txt + "!!!not base64 =3D =ZZ\n"
+    elif kind == "badquote": ct = rnd7.choice(['Content-Type: text/plain; charset="utf-8', 'Content-Type: text/plain; ; ;charset=;', 'Content-Type: ;;', 'Content-Type: text/plain; boundary="'])
+    elif kind == "emptybody":
+        raw = hdrs() + "\nContent-Type: text/plain; charset=utf-8\n\n" if rnd7.random() < .6 else hdrs() + "\n"
+        note(frm, u); mal_counts[kind] += 1
+        return raw, kind, sizes
+    elif kind == "nobound":
+        ct = "Content-Type: multipart/mixed"
+    elif kind == "sameb":
+        b = "SAME"
+        raw = hdrs() + f'\nContent-Type: multipart/mixed; boundary="{b}"\n\n--{b}\nContent-Type: multipart/alternative; boundary="{b}"\n\n--{b}\nContent-Type: text/plain; charset=utf-8\n\n{txt}\n--{b}--\n--{b}--\n'
+        note(frm, u); mal_counts[kind] += 1
+        return raw, kind, sizes
+    elif kind == "deepnest":
+        bs = [f"X{rnd7.randint(10**8, 10**9)}n{n}" for n in range(30)]   # random, so no boundary is a prefix of another
+        raw = hdrs() + "\n" + "".join(f'Content-Type: multipart/mixed; boundary="{b}"\n\n--{b}\n' for b in bs) + f"Content-Type: text/plain; charset=utf-8\n\n{txt}\n" + "".join(f"--{b}--\n" for b in reversed(bs))
+        note(frm, u); mal_counts[kind] += 1
+        return raw, kind, sizes
+    elif kind == "prefixb":
+        raw = hdrs() + f'\nContent-Type: multipart/mixed; boundary="BND"\n\n--BND\nContent-Type: multipart/alternative; boundary="BND2"\n\n--BND2\nContent-Type: text/plain; charset=utf-8\n\n{txt}\n--BND2\nContent-Type: text/html; charset=utf-8\n\n<p>{txt}</p>\n--BND2--\n\n--BND--\n'
+        note(frm, u); mal_counts[kind] += 1
+        return raw, kind, sizes
+    elif kind in ("truncb64", "noend"):
+        content = rbytes7(rnd7.randint(3000, 30000))
+        enc = b64(content)
+        n_chars = len(enc.replace("\n", "").rstrip("="))     # '=' padding carries no data; cutting must not leave a stray one at the end
+        if kind == "truncb64":
+            cut = rnd7.choice([1, 2, 3, 5, 7, 4001]) if len(enc) > 8000 else 1
+            keep = n_chars - cut
+            while keep % 4 == 0: keep -= 1      # always end inside a quantum (2 or 3 chars of 4, or 1 left over)
+            flat = enc.replace("\n", "").rstrip("=")[:keep]
+            enc = "\n".join(flat[x:x + 76] for x in range(0, len(flat), 76)) + "\n"
+            sizes = [keep * 6 // 8]              # base64_decode(): 4 chars -> 3 bytes, 3 -> 2, 2 -> 1, 1 -> 0
+        else: sizes = [len(content)]
+        part = f"Content-Type: application/pdf; name=\"report.pdf\"\nContent-Transfer-Encoding: base64\nContent-Disposition: attachment; filename=\"report.pdf\"\n\n{enc}"
+        raw = hdrs() + f'\nContent-Type: multipart/mixed; boundary="TB"\n\n--TB\nContent-Type: text/plain; charset=utf-8\n\n{txt}\n--TB\n{part}' + ("--TB--\n" if kind == "truncb64" else "")
+        note(frm, u); mal_counts[kind] += 1
+        return raw, kind, sizes
+    elif kind == "nofrom": h["From"] = None
+    raw = hdrs() + f"\n{ct}\n\n{body}"
+    if kind != "nofrom":
+        note(h["From"], u); mal_counts[kind] += 1
+    return raw, kind, sizes
+
 def build(mid, frm, to, subject, ts, in_reply_to=None, kind="plain", with_att=False, extra=(), inline=False):
     global ATT_N, ATT_SIZES
     ATT_N, ATT_SIZES = int(with_att), []
@@ -272,6 +370,12 @@ for i in range(1, N + 1):
             if K >= 5:
                 j += long_thread(i, j, u, K, write)
                 continue
+        if V >= 7 and rnd7.random() < .06:
+            mts = time.time() - rnd7.randint(600, 3 * 86400)
+            raw, _, sz = build_malformed(i, j, u, mts)
+            write(raw, mts); j += 1
+            exp["attachments"] += len(sz); att_sizes.extend(sz)
+            continue
         now = time.time()
         ts = now - rnd.randint(600, 3 * 86400)
         r = rnd.random()
@@ -333,9 +437,11 @@ for i in range(1, N + 1):
             exp["conversations"] += copies; exp["threads"] += copies; exp["attachments"] += ATT_N * copies; att_sizes.extend(ATT_SIZES * copies)
         j += 1
 
+if V >= 7: exp["conversations"] += sum(mal_counts.values()); exp["threads"] += sum(mal_counts.values())
 exp["customers"] = len(addrs) if V >= 4 else len(senders) + N   # + one customer per mailbox address: createCustomers() deliberately does not exclude the To address (upstream, exclusion commented out)
 exp["mails_in_mailboxes"] = N * M
 if V >= 5: exp.update(exp_extra, attachment_sizes=sorted(att_sizes))
+if V >= 7: exp.update(malformed_counts=mal_counts)
 if V >= 6: exp.update(exp6, long_thread_sizes=sorted(long_sizes, reverse=True), min_huge_len=min(huge_lens) if huge_lens else 0, quote_checks=quote_checks)
 open(os.path.join(os.path.dirname(OUT), "users"), "w").write("".join(f"{u}:{{PLAIN}}pw::::::\n" for u in users))
 json.dump(exp, open(os.path.join(os.path.dirname(OUT), "expected.json"), "w"))

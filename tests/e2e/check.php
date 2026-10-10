@@ -74,6 +74,19 @@ if (!empty($exp['quote_checks'])) {
     if ($bad) $fail[] = count($bad).' replies with wrong quote separation (e.g. '.implode('; ', array_slice($bad, 0, 3)).')';
     if ($missing) $fail[] = "$missing quote-check threads not imported";
 }
+// V>=7 theme (malformed MIME): conversations per malformed kind (marker MAL-<kind>-<i>-<j> in the subject), so a failing kind is named instead of only shifting the totals.
+if (!empty($exp['malformed_counts'])) {
+    $seen = array_fill_keys(array_keys($exp['malformed_counts']), 0);
+    foreach (DB::table('conversations')->where('subject', 'like', '%MAL-%')->pluck('subject') as $subject) {
+        if (preg_match('/MAL-([a-z0-9]+)-\d+-\d+/', $subject, $m) && isset($seen[$m[1]])) $seen[$m[1]]++;
+    }
+    foreach ($exp['malformed_counts'] as $kind => $n) {
+        if ($seen[$kind] !== $n) $fail[] = "malformed kind '$kind': $seen[$kind] conversations != expected $n";
+    }
+    // Message::decodeString() strips NUL bytes (#5292): none may reach the stored bodies.
+    $nul = DB::table('threads')->whereRaw('LOCATE(CHAR(0), body) > 0')->count();
+    if ($nul) $fail[] = "$nul thread bodies contain NUL bytes";
+}
 if ($dupMsg) $fail[] = "$dupMsg duplicated message_id values in threads";
 if ($dupMail) $fail[] = "$dupMail duplicated customer emails";
 if ($orphans) $fail[] = "$orphans conversations without customer";

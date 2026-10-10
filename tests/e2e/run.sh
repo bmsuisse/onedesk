@@ -55,6 +55,7 @@ fresh() {  # regenerate N x M unread mails (SEED, VARIETY env), restart IMAP, wi
   sql "SET FOREIGN_KEY_CHECKS=0; TRUNCATE threads; TRUNCATE conversations; TRUNCATE customers; TRUNCATE emails; TRUNCATE attachments; TRUNCATE polycast_events; SET FOREIGN_KEY_CHECKS=1;" 2>/dev/null
   docker exec odtest-php sh -c 'rm -rf /app/storage/app/attachment/* 2>/dev/null; true'
   php_env odtest-php php artisan freescout:clear-cache >/dev/null 2>&1 || true
+  rm -f $WORK/bootcache/config.php   # clear-cache re-caches config: that would freeze APP_FETCH_PARALLEL (case B was never parallel) and DB env
   docker cp $WORK/expected.json odtest-php:/tmp/expected.json
   sleep 2
 }
