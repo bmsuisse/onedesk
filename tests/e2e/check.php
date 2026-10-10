@@ -199,6 +199,29 @@ if (!empty($exp['t11_kinds'])) {
     }
     if ($bad) $fail[] = 'folders/flags: '.implode('; ', $bad);
 }
+// V>=12 theme (unusual senders and addresses): per kind (header X-E2E-Kind: [t12-<kind>]) the conversations opened and threads added, and per marker T12-<i>-<j> the (mailbox, customer_email,
+// subject) of every conversation: addresses are lower-cased, "+tag" variants stay distinct, subjects (300+ chars, emoji, RTL, RFC 2047 folded) are stored decoded and whole, see gen.py.
+if (!empty($exp['t12_kinds'])) {
+    $bad = [];
+    foreach ($exp['t12_kinds'] as $kind => list($eConv, $eThr)) {
+        $like = '%X-E2E-Kind: [t12-'.$kind.']%';
+        $gConv = DB::table('threads')->where('first', 1)->where('headers', 'like', $like)->count();
+        $gThr = DB::table('threads')->where('headers', 'like', $like)->count();
+        if ($gConv !== $eConv || $gThr !== $eThr) $bad[] = "$kind [convs,threads] [$gConv,$gThr] != [$eConv,$eThr]";
+    }
+    $got = [];
+    foreach (DB::table('conversations')->join('mailboxes', 'mailboxes.id', '=', 'conversations.mailbox_id')->where('conversations.subject', 'like', '%T12-%')
+        ->select('conversations.subject', 'conversations.customer_email', 'mailboxes.email')->get() as $r) {
+        if (preg_match('/T12-(\d+-\d+)/', $r->subject, $m)) $got['T12-'.$m[1]][] = [$r->email, $r->customer_email, $r->subject];
+    }
+    $badm = [];
+    foreach ($exp['t12_convs'] + array_fill_keys(array_keys($got), []) as $marker => $rows) {
+        $g = $got[$marker] ?? []; sort($g); $e = $exp['t12_convs'][$marker] ?? []; sort($e);
+        if ($g !== $e) $badm[] = $marker.' got '.json_encode($g, JSON_UNESCAPED_UNICODE).' != '.json_encode($e, JSON_UNESCAPED_UNICODE);
+    }
+    if ($badm) { $bad[] = count($badm).' of '.count($exp['t12_convs']).' t12 markers wrong [mailbox, customer_email, subject] (e.g. '.implode(' | ', array_slice($badm, 0, 3)).')'; fwrite(STDERR, "t12 detail:\n  ".implode("\n  ", $badm)."\n"); }
+    if ($bad) $fail[] = 'unusual senders: '.implode('; ', $bad);
+}
 // Two-phase case agentreply: agents answered notifications by email. Replies with a valid hash become message threads (created_by_user_id = the agent) of the conversation they replied to,
 // a forwarded notification into another mailbox opens a conversation, an invalid hash leaves nothing.
 if (!empty($exp['agent_reply_checks'])) {

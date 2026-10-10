@@ -21,6 +21,7 @@ rnd8 = random.Random(SEED + 5000)  # theme "one mail to several mailboxes / same
 rnd9 = random.Random(SEED + 6000)  # theme "machine mail" (V>=9) draws only from this one
 rnd10 = random.Random(SEED + 7000)  # theme "forwards / @fwd, mails from a mailbox address, helpdesk agents writing by email" (V>=10) draws only from this one
 rnd11 = random.Random(SEED + 8000)  # theme "several IMAP folders / flags / sent copies" (V>=11) draws only from this one
+rnd12 = random.Random(SEED + 9000)  # theme "unusual senders and addresses" (V>=12) draws only from this one
 WORDS = "invoice order delivery refund login password account billing shipping error crash update contact support".split()
 SUBJECTS_NONASCII = ["Rechnung für Bestellung", "Réclamation commande", "Wiederholte Störung — bitte prüfen", "注文について"]
 os.makedirs(OUT, exist_ok=True)
@@ -955,6 +956,124 @@ def theme11(i, j, u, room, put, tickets, extras):
     note(sent_from, from_hdr); t11acct(kind, 0, 1)
     return 1
 
+# V>=12 theme: unusual senders and addresses. Every mail carries "X-E2E-Kind: [t12-<kind>]"; conversation-creating events carry a marker "T12-<i>-<j>" in the Subject.
+# Semantics, from Email::sanitizeEmail() / createCustomers() / Customer::create() / saveCustomerThread():
+#   * An address is lower-cased (mb_strtolower) and passed through FILTER_SANITIZE_EMAIL, which keeps "+" and "-": CUST5@EXAMPLE.ORG is the customer of cust5@example.org, but
+#     cust5+tag@example.org is another customer (one customers row + one emails row per distinct sanitized address; gen note() = lower-case set). Punycode domains (xn--...) are plain ASCII.
+#   * Threading looks at In-Reply-To only, never at the sender. A reply from ANOTHER customer joins the conversation too (conversation->customer_id switches to the replier during the
+#     save); so for replies only the thread count is asserted, the conversation's customer_email only for the new tickets.
+#   * Subject is stored as decoded (varchar(998)), the From address as conversations.customer_email (sanitized).
+#   plusvar   one person writes 2-4 new tickets from base@, base+tagN@, BASE+TAGN@ (upper) variants: every ticket its own conversation, the lower-cased variants are distinct customers
+#   noname    From without display name: "addr" or "<addr>"; hyphen/underscore/dot local parts
+#   idn       punycode domain (xn--bcher-kva.example), display name with umlauts
+#   upper     ticket from an UPPER-CASE address, then a reply from the lower-case spelling: same customer, 1 conversation, 2 threads
+#   longsubj  300-700 character ASCII subject on one header line
+#   emoji     320+ character subject with emoji (RFC 2047 folded over several lines), display name with emoji
+#   rtl       Hebrew / Arabic display name and subject (RFC 2047), RTL body
+#   varreply  reply (In-Reply-To of a ticket) from the UPPER-CASE spelling (same customer) or from a plus-variant (new customer): +1 thread
+#   ccvar     one ticket with To = mailbox and Cc listing 3-5 spellings of the same two people (case and plus variants): one conversation, one customer per distinct sanitized address
+T12 = {"plusvar": 16, "noname": 14, "idn": 12, "upper": 10, "longsubj": 10, "emoji": 9, "rtl": 8, "varreply": 12, "ccvar": 9}
+t12 = {}             # kind -> [conversations, threads] a correct import creates
+t12_convs = {}       # marker -> [[mailbox, customer_email, subject], ...] of the conversations it opens
+def w12(lo, hi): return " ".join(rnd12.choice(WORDS) for _ in range(rnd12.randint(lo, hi)))
+def t12acct(kind, convs, threads):
+    m = t12.setdefault(kind, [0, 0]); m[0] += convs; m[1] += threads
+    exp["conversations"] += convs; exp["threads"] += threads
+def base12():
+    if rnd12.random() < .5: return f"cust{rnd12.randint(1, 300)}@example.org"
+    return f"{rnd12.choice(['anna', 'jean-luc', 'o.brien', 'hans_peter', 'maria.garcia-lopez', 'x'])}{rnd12.randint(1, 400)}@{rnd12.choice(['example.org', 'mail.example.com', 'partner.example'])}"
+def plus12(a, tag): l, d = a.split("@"); return f"{l}+{tag}@{d}"
+def hdr_subj12(s): return email.header.Header(s, "utf-8").encode() if any(ord(c) > 127 for c in s) else s
+def theme12(i, j, u, room, write, tickets):
+    """one event of the theme written into mailbox i; -> slots used, 0 if it does not fit"""
+    kind = rnd12.choices(list(T12), list(T12.values()))[0]
+    if not tickets and kind == "varreply": kind = "noname"
+    if kind == "upper" and room < 2: kind = "noname"
+    K = rnd12.randint(2, 4) if kind == "plusvar" else 1
+    if room < K: kind, K = "noname", 1
+    now = time.time()
+    ts = now - rnd12.randint(600, 3 * 86400)
+    marker = f"T12-{i}-{j}"
+    xk = f"t12-{kind}"
+    tag = lambda: "".join(rnd12.choice("abcdefghijklmnopqrstuvwxyz0123456789") for _ in range(rnd12.randint(2, 8)))
+    mk = lambda tag_, ts_, frm, to, subj, extra=(), body=None: m_text(m_hdr(xk, f"<t12-{tag_}{i}-{j}@gen.test>", ts_, frm, to, hdr_subj12(subj), extra), (body or w12(8, 80)) + "\n", "text/plain; charset=utf-8", "8bit")
+    if kind == "plusvar":
+        base = base12(); name = rnd12.choice([n for n in NAMES10 if n] + [""])
+        variants = [base]
+        for _ in range(K - 1): variants.append(plus12(base, tag()))
+        rnd12.shuffle(variants)
+        for k, a in enumerate(variants):
+            spell = a.upper() if k and rnd12.random() < .3 else a
+            frm = email.utils.formataddr((name, spell))
+            t = ts + k * 60 if ts + k * 60 < now - 5 else ts
+            subj = f"{rnd12.choice(WORDS)} {marker}"
+            write(mk(f"pv{k}", t, frm, u, subj), t)
+            note(frm, u); t12conv(marker, u, a, subj)
+        t12acct(kind, K, K)
+        return K
+    if kind == "noname":
+        a = base12()
+        frm = rnd12.choice([a, f"<{a}>", a.upper() if rnd12.random() < .3 else a])
+        subj = f"{rnd12.choice(WORDS)} {marker}"
+        write(mk("nn", ts, frm, u, subj), ts)
+        note(frm, u); t12conv(marker, u, a, subj); t12acct(kind, 1, 1)
+        return 1
+    if kind == "idn":
+        a = f"{rnd12.choice(['info', 'kontakt', 'e.muller', 'buchhaltung'])}@{rnd12.choice(['xn--bcher-kva.example', 'xn--mller-kva.de', 'xn--80ak6aa92e.com', 'xn--rksmrgs-5wao1o.se', 'xn--fiq228c.xn--fiqs8s'])}"
+        frm = email.utils.formataddr((rnd12.choice(["Bücher AG", "Müller & Söhne", "Räksmörgås", "", "中国公司"]), a))
+        subj = f"{rnd12.choice(WORDS)} {marker}"
+        write(mk("idn", ts, frm, u, subj), ts)
+        note(frm, u); t12conv(marker, u, a, subj); t12acct(kind, 1, 1)
+        return 1
+    if kind == "upper":
+        a = base12()
+        frm = email.utils.formataddr(("SHOUTING CUSTOMER", a.upper())) if rnd12.random() < .6 else a.upper()
+        subj = f"{rnd12.choice(WORDS)} {marker}"
+        mid = f"<t12-up{i}-{j}@gen.test>"
+        write(mk("up", ts, frm, u, subj), ts)
+        ts2 = ts + rnd12.randint(5, max(5, min(3600, int(now - ts) - 2)))
+        write(mk("upr", ts2, a, u, "Re: " + subj, [f"In-Reply-To: {mid}", f"References: {mid}"]), ts2)
+        note(frm, a, u); t12conv(marker, u, a, subj); t12acct(kind, 1, 2)
+        return 2
+    if kind == "varreply":
+        mid0, cust0, subj0, pts, _, from_hdr = rnd12.choice(tickets)
+        ts = pts + rnd12.randint(5, max(5, min(3600, int(now - pts) - 2)))
+        a = cust0.upper() if rnd12.random() < .5 else plus12(cust0, tag())
+        frm = email.utils.formataddr((rnd12.choice(["", "Replying Person"]), a))
+        write(mk("vr", ts, frm, u, "Re: " + subj0, [f"In-Reply-To: {mid0}", f"References: {mid0}"]), ts)
+        note(frm, u); t12acct(kind, 0, 1)
+        return 1
+    if kind == "ccvar":
+        a, b = base12(), base12()
+        spell = lambda x: rnd12.choice([x, x.upper(), x.title(), plus12(x, tag())])
+        cc = [spell(a), spell(b), a, spell(a)] + ([spell(b)] if rnd12.random() < .5 else [])
+        cc = [email.utils.formataddr((rnd12.choice(["", "Colleague"]), x)) for x in cc[:rnd12.randint(3, 5)]]
+        cust = base12()
+        frm = f"Customer {cust.split('@')[0]} <{cust}>"
+        subj = f"{rnd12.choice(WORDS)} {marker}"
+        write(mk("cv", ts, frm, u, subj, ["Cc: " + ", ".join(cc)]), ts)
+        note(frm, u, *cc); t12conv(marker, u, cust, subj); t12acct(kind, 1, 1)
+        return 1
+    if kind == "longsubj":
+        a = base12()
+        subj = " ".join([marker] + [rnd12.choice(WORDS) for _ in range(rnd12.randint(40, 100))])[:rnd12.randint(300, 700)].rstrip()
+        frm = f"Customer {a.split('@')[0]} <{a}>"
+    elif kind == "emoji":
+        a = base12()
+        emo = "\U0001f389\U0001f680\U0001f4a5❤️\U0001f62d\U0001f44d\U0001f1e8\U0001f1ed"
+        subj = f"{marker} " + "".join(rnd12.choice(WORDS) + " " + rnd12.choice(emo) + " " for _ in range(rnd12.randint(30, 50)))
+        subj = subj[:rnd12.randint(330, 420)].rstrip()
+        frm = email.utils.formataddr((rnd12.choice(["\U0001f389 Party Time", "Zoë ❤️ Support", "\U0001f680"]), a))
+    else:   # rtl
+        a = base12()
+        he, ar = "שלום עולם, תודה על ההזמנה", "مرحبا بالعالم، شكرا على الطلب"
+        subj = f"{rnd12.choice([he, ar])} {marker} {rnd12.choice(WORDS)}"
+        frm = email.utils.formataddr((rnd12.choice([he[:10], ar[:10], "דוד כהן", "محمد علي"]), a))
+    write(mk("x", ts, frm, u, subj, body=rnd12.choice(["שלום, ", "مرحبا ", "Hello "]) + w12(8, 60)), ts)
+    note(frm, u); t12conv(marker, u, a, subj); t12acct(kind, 1, 1)
+    return 1
+def t12conv(marker, mailbox, cust, subj): t12_convs.setdefault(marker, []).append([mailbox, cust.lower(), subj])
+
 # one bulk sender per ~40 mails; the dates are shared by all mailboxes (a few seconds apart), so mailboxes fetched in parallel meet the sender at the same time
 bursts = []
 if V >= 8 and N >= 2:
@@ -1021,6 +1140,9 @@ for i in range(1, N + 1):
             if used: j += used; continue
         if V >= 11 and rnd11.random() < (.12 if extras11 else .07):
             used = theme11(i, j, u, M - j - len(pending.get(i, [])) - len(bq), put11, tickets, extras11)
+            if used: j += used; continue
+        if V >= 12 and rnd12.random() < .08:
+            used = theme12(i, j, u, M - j - len(pending.get(i, [])) - len(bq), write, tickets)
             if used: j += used; continue
         if V >= 7 and rnd7.random() < .06:
             mts = time.time() - rnd7.randint(600, 3 * 86400)
@@ -1102,6 +1224,7 @@ if V >= 8: exp.update(exp8, fan_groups=fan_groups, fan_kinds=fan_kinds, burst_se
 if V >= 9: exp.update(machine_kinds=mach, list_groups=list_groups)
 if V >= 10: exp.update(t10_kinds=t10, t10_convs={k: sorted(v) for k, v in t10_convs.items()})
 if V >= 11: exp.update(t11_kinds=t11, t11_flags=t11_flags, t11_mails=t11_mails)
+if V >= 12: exp.update(t12_kinds=t12, t12_convs={k: sorted(v) for k, v in t12_convs.items()})
 if V >= 6: exp.update(exp6, long_thread_sizes=sorted(long_sizes, reverse=True), min_huge_len=min(huge_lens) if huge_lens else 0, quote_checks=quote_checks)
 open(os.path.join(os.path.dirname(OUT), "users"), "w").write("".join(f"{u}:{{PLAIN}}pw::::::\n" for u in users))
 json.dump(exp, open(os.path.join(os.path.dirname(OUT), "expected.json"), "w"))
