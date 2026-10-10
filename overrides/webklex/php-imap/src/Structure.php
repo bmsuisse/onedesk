@@ -116,7 +116,8 @@ class Structure {
             //return $this->detectParts($boundary, $body, $part_number);
             $parts = $this->detectParts($boundary, $body, $part_number);
 
-            if (count($parts) > 1) {
+            // A nested multipart with a single child must be expanded too, not stored as one opaque part.
+            if (count($parts) > 0) {
                 return $parts;
             }
         }
