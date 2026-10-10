@@ -221,7 +221,7 @@ if (!empty($exp['t12_kinds'])) {
     }
     if ($badm) { $bad[] = count($badm).' of '.count($exp['t12_convs']).' t12 markers wrong [mailbox, customer_email, subject] (e.g. '.implode(' | ', array_slice($badm, 0, 3)).')'; fwrite(STDERR, "t12 detail:\n  ".implode("\n  ", $badm)."\n"); }
     foreach ($exp['t12_bodies'] ?? [] as $tok) {
-        if (DB::table('threads')->where('body', 'like', '%'.$tok.'%')->count() !== 1) $bad[] = "body with $tok missing (invalid UTF-8 body imported empty?)";
+        if (DB::table('threads')->where('body', 'like', '%'.$tok.' %')->count() !== 1) $bad[] = "body with $tok missing (invalid UTF-8 body imported empty?)";
     }
     if ($bad) $fail[] = 'unusual senders: '.implode('; ', $bad);
 }
