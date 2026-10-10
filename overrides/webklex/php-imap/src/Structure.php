@@ -212,7 +212,12 @@ class Structure {
     public function find_parts(): array {
         if($this->type === IMAP::MESSAGE_TYPE_MULTIPART) {
             if (($boundary = $this->header->getBoundary()) === null)  {
-                throw new MessageContentFetchingException("no content found", 0);
+                // Multipart without boundary: import the raw body as one part instead of dropping the mail.
+                $part = new Part($this->raw, $this->header);
+                $part->subtype = 'plain';
+                $part->content_type = 'text/plain';
+
+                return [$part];
             }
 
             return $this->detectParts($boundary, $this->raw);
