@@ -8,13 +8,14 @@ Mix per mailbox (deterministic, seeded):
   ~70% new tickets, ~20% replies (In-Reply-To an earlier mail of the same sender -> same conversation),
   ~4% exact duplicates (same Message-ID twice -> imported once), rest odd-but-valid encodings.
 """
-import base64, email.header, email.utils, json, os, random, sys, time, urllib.parse
+import base64, email.header, email.utils, html as htmllib, json, os, quopri, random, sys, time, urllib.parse
 
 N, M, OUT = int(sys.argv[1]), int(sys.argv[2]), os.path.abspath(sys.argv[3])
 SEED, V = int(os.environ.get("SEED", 42)), int(os.environ.get("VARIETY", 99))  # V gates scenarios: 1 plain+replies, 2 +duplicates, 3 +odd encodings; later rounds add more
 rnd = random.Random(SEED)
 rnd4 = random.Random(SEED + 1000)  # theme "recipients" (V>=4) draws only from this one, so V<4 output stays identical to earlier rounds
 rnd5 = random.Random(SEED + 2000)  # theme "attachments" (V>=5) draws only from this one
+rnd6 = random.Random(SEED + 3000)  # theme "long threads / huge bodies / quotes" (V>=6) draws only from this one
 WORDS = "invoice order delivery refund login password account billing shipping error crash update contact support".split()
 SUBJECTS_NONASCII = ["Rechnung für Bestellung", "Réclamation commande", "Wiederholte Störung — bitte prüfen", "注文について"]
 os.makedirs(OUT, exist_ok=True)
@@ -103,6 +104,119 @@ def build5(h, txt, inline):
     ATT_N = n
     return out + f"--{mixed_b}--\n"
 
+# V>=6 theme (huge_bodies = table-style mails whose body is stored whole; data: URI mails are counted in huge_data_uri_mails): very long threads (30+ chained replies in ONE conversation, References grows with every reply), huge bodies (1-3MB html:
+# big tables or pasted data: URI images), deeply nested quoted replies in the formats real clients produce (Gmail, Apple Mail, Outlook
+# web, Outlook desktop, plain text "> " quoting), signatures with legal disclaimers.
+# Counts: a long thread is 1 conversation + 1 + K threads (every reply carries In-Reply-To of the previous mail, so processMessage finds
+# prev_thread by Message-ID); it is NOT put into `tickets`, so no other reply joins it and the thread size of that conversation is exactly K+1.
+# Quote semantics (separateReply): for a reply, the stored body is the part before the FIRST separator of Mail::$alternative_reply_separators
+# (gmail_quote div, blockquote type="cite", divRplyFwdMsg, Outlook MsoNormal header); each message carries a unique token in its own new text,
+# so the stored body of such a reply must contain its own token and none of the quoted tokens. Plain "> " quoting has no separator -> not asserted.
+exp6 = {"long_threads": 0, "huge_bodies": 0, "huge_data_uri_mails": 0, "data_uri_images": 0}
+long_sizes, quote_checks, huge_lens = [], [], []
+CLIENTS = ["gmail", "outlook", "outlookcm", "apple", "plain"]
+DISCLAIMER = ("This e-mail and any attachments are confidential and may be privileged. If you are not the intended recipient, please notify the sender "
+              "immediately and delete this message; any unauthorised copying, disclosure or distribution of the material in this e-mail is strictly forbidden. "
+              "Please consider the environment before printing this email. Registered office: Bahnhofstrasse 1, 8001 Zurich. -- Please do not reply above this line unless you mean it.")
+def w6(lo, hi): return " ".join(rnd6.choice(WORDS) for _ in range(rnd6.randint(lo, hi)))
+def rbytes6(n): return rnd6.getrandbits(8 * n).to_bytes(n, 'big')
+def esc6(t): return htmllib.escape(t, quote=False)
+def sig6(name):
+    lines = [name, rnd6.choice(["Senior Account Manager", "Support Lead", "Head of Operations", "Sales"]), "ACME AG", f"T +41 44 {rnd6.randint(100, 999)} {rnd6.randint(10, 99)} {rnd6.randint(10, 99)}"]
+    disc = rnd6.random() < .5
+    txt = "\n-- \n" + "\n".join(lines) + ("\n\n" + DISCLAIMER if disc else "") + "\n"
+    htm = "<div>-- <br>" + "<br>".join(esc6(l) for l in lines) + "</div>" + (f'<p style="font-size:8pt;color:#888888">{DISCLAIMER}</p>' if disc else "")
+    return txt, htm
+def qtxt(t): return "\n".join((">" if l.startswith(">") else "> ") + l for l in t.split("\n"))
+def encode_html(doc):
+    c = rnd6.random()
+    if c < .6: return "base64", b64(doc.encode())
+    return "quoted-printable", quopri.encodestring(doc.encode()).decode()
+def part_mime(h, txt, htm):
+    """multipart/alternative: ascii text part + html part (base64 or quoted-printable, so no over-long lines)"""
+    b = f"----=_Alt_{rnd6.randint(10**5, 10**6)}_{rnd6.randint(10**8, 10**9)}"
+    cte, enc = encode_html(htm)
+    return "\n".join(h) + f'\nContent-Type: multipart/alternative; boundary="{b}"\n\n--{b}\nContent-Type: text/plain; charset=utf-8\nContent-Transfer-Encoding: 7bit\n\n{txt}\n--{b}\nContent-Type: text/html; charset=utf-8\nContent-Transfer-Encoding: {cte}\n\n{enc}\n--{b}--\n'
+def long_thread(i, j, u, K, write):
+    """ticket + K chained replies in mailbox u; returns the number of mails written"""
+    now = time.time()
+    ts0 = now - rnd6.randint(2 * 86400, 3 * 86400)
+    gaps = [rnd6.randint(1, 1000) for _ in range(K)]
+    span, tot, cum, tss = (now - 600) - ts0, sum(gaps), 0, [ts0]
+    for g in gaps: cum += g; tss.append(ts0 + span * cum / tot)
+    cust = f"cust{rnd6.randint(1, 300)}@example.org"
+    coll = f"colleague{rnd6.randint(1, 80)}@partner.example"
+    people = {"c": (f"Customer {cust.split('@')[0]}", cust), "x": (f"Colleague {coll.split('@')[0][9:]}", coll)}
+    sigs = {k: sig6(v[0]) for k, v in people.items()}
+    style = {k: rnd6.choice(CLIENTS) for k in people}
+    subj = f"{rnd6.choice(WORDS)} {i}-{j}"
+    mids = [f"<m{i}-{j}@gen.test>"] + [f"<lt{i}-{j}-{k}@gen.test>" for k in range(1, K + 1)]
+    prev = None                                   # (txt, html, who, ts) of the previous mail
+    for k in range(K + 1):
+        who = "x" if k and rnd6.random() < .15 else "c"
+        name, addr = people[who]
+        st = style[who]
+        tok = f"QT{i}x{j}x{k}Q"
+        paras = [f"{tok} " + w6(8, 40)] + [w6(10, 60) for _ in range(rnd6.randint(0, 2))]
+        new_txt, new_html = "\n\n".join(paras) + "\n", "".join(f"<p>{esc6(p)}</p>" for p in paras)
+        stxt, shtml = sigs[who]
+        ts = int(tss[k])
+        txt, htm = new_txt + stxt, new_html + shtml
+        if prev:
+            ptxt, phtm, pwho, pts = prev
+            pname, paddr = people[pwho]
+            date = email.utils.formatdate(pts)
+            attr = f"On {date}, {pname} &lt;{paddr}&gt; wrote:"
+            txt += f"\nOn {date}, {pname} <{paddr}> wrote:\n" + qtxt(ptxt) + "\n"
+            if st == "gmail": htm = f'<div dir="ltr">{htm}</div><br><div class="gmail_quote"><div dir="ltr" class="gmail_attr">{attr}<br></div><blockquote class="gmail_quote" style="margin:0px 0px 0px 0.8ex;border-left:1px solid rgb(204,204,204);padding-left:1ex">{phtm}</blockquote></div>'
+            elif st == "apple": htm = f'<div>{htm}</div><div><br><blockquote type="cite"><div>{attr}</div><br class="Apple-interchange-newline"><div>{phtm}</div></blockquote></div>'
+            elif st == "outlook": htm = f'<div>{htm}</div><hr style="display:inline-block;width:98%" tabindex="-1"><div id="divRplyFwdMsg" dir="ltr"><font face="Calibri, sans-serif" style="font-size:11pt" color="#000000"><b>From:</b> {pname}<br><b>Sent:</b> {date}<br><b>To:</b> {u}<br><b>Subject:</b> {subj}</font><div>&nbsp;</div></div><div>{phtm}</div>'
+            elif st == "outlookcm": htm = f'<div class="WordSection1">{htm}<div><div style="border:none;border-top:solid #E1E1E1 1.0pt;padding:3.0pt 0cm 0cm 0cm"><p class="MsoNormal"><b>From:</b> {pname} [mailto:{paddr}]<br><b>Sent:</b> {date}<br><b>Subject:</b> {subj}</p></div></div>{phtm}</div>'
+            else: htm = "<div>" + esc6(txt).replace("\n", "<br>") + "</div>"
+            if st != "plain":
+                forbid = sorted({f"QT{i}x{j}x0Q", f"QT{i}x{j}x{k - 1}Q"})
+                quote_checks.append([mids[k], tok, forbid])
+        elif st == "plain": htm = "<div>" + esc6(txt).replace("\n", "<br>") + "</div>"
+        h = [f"Message-ID: {mids[k]}", f"Date: {email.utils.formatdate(ts)}", f"From: {email.utils.formataddr((name, addr))}", f"To: {u}",
+             f"Subject: {rnd6.choice(['Re: ', 'RE: ', 'AW: ']) if k else ''}{subj}", "MIME-Version: 1.0"]
+        if who == "x" or (k and rnd6.random() < .1): h.append("Cc: " + email.utils.formataddr(people["c" if who == "x" else "x"]))
+        if k: h += [f"In-Reply-To: {mids[k - 1]}", "References: " + "\n ".join(" ".join(mids[n:n + 3]) for n in range(0, k, 3))]
+        note(*[x.split(": ", 1)[1] for x in h if x.startswith(("From:", "To:", "Cc:"))])
+        if st == "plain": raw = "\n".join(h) + f"\nContent-Type: text/plain; charset=utf-8\nContent-Transfer-Encoding: 7bit\n\n{txt}"
+        else: raw = part_mime(h, txt, f'<html><head><meta http-equiv="Content-Type" content="text/html; charset=utf-8"></head><body>{htm}</body></html>')
+        write(raw, ts)
+        prev = (txt, htm, who, ts)
+    exp["conversations"] += 1; exp["threads"] += K + 1
+    exp6["long_threads"] += 1; long_sizes.append(K + 1)
+    return K + 1
+def huge_html(imgs):
+    target = rnd6.randint(1_000_000, 3_000_000)
+    out, size = [], 0
+    if rnd6.random() < .5:                        # report / newsletter style tables
+        rows = ["<tr>" + "".join(f'<td style="padding:4px;border:1px solid #cccccc;font-family:Arial">{w6(1, 6)} {rnd6.randint(1, 99999)}</td>' for _ in range(6)) + "</tr>\n" for _ in range(60)]
+        out.append('<p>Monthly report</p><table style="border-collapse:collapse">\n'); size = len(out[0])
+        while size < target:
+            r = rnd6.choice(rows); out.append(r); size += len(r)
+        out.append("</table>")
+    else:                                         # pasted screenshots as data: URIs
+        while size < target:
+            png = rbytes6(rnd6.randint(100_000, 400_000)); imgs.append(len(png))
+            r = f"<p>{w6(10, 80)}</p>" + '<img src="data:image/png;base64,' + base64.b64encode(png).decode() + '" alt="shot">\n'
+            out.append(r); size += len(r)
+    return "".join(out)
+def build_huge(mid, frm, to, subject, ts, extra=()):
+    global ATT_N, ATT_SIZES
+    ATT_SIZES = []
+    imgs = []
+    body = huge_html(imgs)
+    # FetchEmails::saveCustomerThread() -> Thread::replaceBase64ImagesWithAttachments(): every data:image/..;base64 <img> becomes an embedded
+    # attachment row (the body then only holds its URL, so it shrinks); only the table style keeps its full 1-3MB body.
+    ATT_N = len(imgs); ATT_SIZES = list(imgs); exp6["data_uri_images"] += len(imgs)
+    if imgs: exp6["huge_data_uri_mails"] += 1
+    else: huge_lens.append(len(body)); exp6["huge_bodies"] += 1
+    h = [f"Message-ID: {mid}", f"Date: {email.utils.formatdate(ts)}", f"From: {frm}", f"To: {to}", f"Subject: {subject}", "MIME-Version: 1.0"] + list(extra)
+    return part_mime(h, "Please see the report below.\n", f"<html><body>{body}</body></html>")
+
 def build(mid, frm, to, subject, ts, in_reply_to=None, kind="plain", with_att=False, extra=(), inline=False):
     global ATT_N, ATT_SIZES
     ATT_N, ATT_SIZES = int(with_att), []
@@ -141,6 +255,8 @@ for i in range(1, N + 1):
         seq += 1
         open(f"{d}/new/{int(ts)}.{i}_{seq}.gen", "w", encoding="utf-8", errors="surrogateescape").write(msg)
     j = 0
+    plan = None           # V>=6: (position, replies) of this mailbox's one long thread
+    if V >= 6 and M >= 40 and rnd6.random() < .4: plan = (rnd6.randint(0, M // 2), min(rnd6.randint(30, 45), M // 3))
     def pool_addr():
         return f"cust{rnd4.randint(1, 300)}@example.org" if rnd4.random() < .7 else f"colleague{rnd4.randint(1, 80)}@partner.example"
     def pool_list(lo, hi):
@@ -150,6 +266,12 @@ for i in range(1, N + 1):
             raw, pts = pending[i].pop(0)
             write(raw, pts); j += 1
             continue
+        if plan and j >= plan[0]:
+            K = min(plan[1], M - j - 1 - len(pending.get(i, [])))
+            plan = None
+            if K >= 5:
+                j += long_thread(i, j, u, K, write)
+                continue
         now = time.time()
         ts = now - rnd.randint(600, 3 * 86400)
         r = rnd.random()
@@ -203,7 +325,8 @@ for i in range(1, N + 1):
                     note(rt)
                 note(from_hdr, to_hdr, *[x[4:] for x in extra if x.startswith("Cc:")])
                 if multi: copies = 2
-            raw = build(mid, from_hdr, to_hdr, hdr_subj, ts, kind=kind, with_att=att, extra=extra, inline=inl)
+            if V >= 6 and not att and copies == 1 and rnd6.random() < .012: raw = build_huge(mid, from_hdr, to_hdr, hdr_subj, ts, extra)
+            else: raw = build(mid, from_hdr, to_hdr, hdr_subj, ts, kind=kind, with_att=att, extra=extra, inline=inl)
             write(raw, ts)
             if copies == 2: pending.setdefault(jx, []).append((raw, ts))
             else: tickets.append((mid, cust, hdr_subj, ts, raw, from_hdr))
@@ -213,6 +336,7 @@ for i in range(1, N + 1):
 exp["customers"] = len(addrs) if V >= 4 else len(senders) + N   # + one customer per mailbox address: createCustomers() deliberately does not exclude the To address (upstream, exclusion commented out)
 exp["mails_in_mailboxes"] = N * M
 if V >= 5: exp.update(exp_extra, attachment_sizes=sorted(att_sizes))
+if V >= 6: exp.update(exp6, long_thread_sizes=sorted(long_sizes, reverse=True), min_huge_len=min(huge_lens) if huge_lens else 0, quote_checks=quote_checks)
 open(os.path.join(os.path.dirname(OUT), "users"), "w").write("".join(f"{u}:{{PLAIN}}pw::::::\n" for u in users))
 json.dump(exp, open(os.path.join(os.path.dirname(OUT), "expected.json"), "w"))
 print(exp, file=sys.stderr)

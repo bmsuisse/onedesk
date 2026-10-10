@@ -34,6 +34,12 @@ if (isset($exp['attachment_sizes'])) {
         $fail[] = 'attachment sizes differ from generated: '.array_sum($miss).' expected sizes missing in DB (e.g. '.implode(',', array_slice(array_keys($miss), 0, 5)).')';
     }
 }
+// Every attachment row belongs to a thread (no thread -> never deleted with its conversation, not shown with its thread).
+$orphanAtt = DB::table('attachments')->whereNull('thread_id')->count();
+if ($orphanAtt) $fail[] = "$orphanAtt attachments without thread_id";
+// Every customer here was created from an address: one without an email row is a leftover of an interrupted Customer::create() (customer saved, email not yet).
+$noEmailCust = DB::table('customers')->whereNotExists(function ($q) { $q->select(DB::raw(1))->from('emails')->whereRaw('emails.customer_id = customers.id'); })->count();
+if ($noEmailCust) $fail[] = "$noEmailCust customers without any email";
 $noFile = 0; $badSize = 0; $noDir = 0;
 foreach (DB::table('attachments')->select('id', 'file_name', 'file_dir', 'size')->orderBy('id')->cursor() as $a) {
     if (!$a->file_dir) { $noDir++; continue; }
@@ -42,6 +48,32 @@ foreach (DB::table('attachments')->select('id', 'file_name', 'file_dir', 'size')
     elseif (App\Attachment::getDisk()->size($path) != $a->size) $badSize++;
 }
 if ($noDir || $noFile || $badSize) $fail[] = "attachments: $noDir without file_dir, $noFile files missing on disk, $badSize with wrong size";
+// V>=6 theme. Long threads: every reply links via In-Reply-To, so a long thread is one conversation of exactly K+1 threads (gen.py keeps other replies away from it).
+if (!empty($exp['long_thread_sizes'])) {
+    $n = count($exp['long_thread_sizes']);
+    $got = DB::table('threads')->select('conversation_id', DB::raw('count(*) as c'))->groupBy('conversation_id')->orderBy('c', 'desc')->limit($n)->pluck('c')->map(function ($v) { return (int) $v; })->all();
+    if ($got !== $exp['long_thread_sizes']) $fail[] = 'longest conversations have '.implode(',', $got).' threads, expected '.implode(',', $exp['long_thread_sizes']);
+}
+// Huge bodies (1-3MB html) are stored whole: DOM re-serialization of ASCII markup keeps the size (generous 10% margin), nothing else is that big.
+if (!empty($exp['huge_bodies'])) {
+    $big = DB::table('threads')->whereRaw('LENGTH(body) >= ?', [(int) ($exp['min_huge_len'] * 0.9)])->count();
+    if ($big !== $exp['huge_bodies']) $fail[] = "threads with a body >= 90% of the smallest generated huge body: $big != expected {$exp['huge_bodies']}";
+}
+// Reply separation: the stored body of a reply that quotes its predecessor behind a known separator holds its own text and none of the quoted tokens.
+if (!empty($exp['quote_checks'])) {
+    $bad = []; $missing = 0;
+    foreach (array_chunk($exp['quote_checks'], 200) as $chunk) {
+        $rows = DB::table('threads')->whereIn('message_id', array_map(function ($c) { return trim($c[0], '<>'); }, $chunk))->pluck('body', 'message_id')->all();
+        foreach ($chunk as list($mid, $own, $forbid)) {
+            $body = $rows[trim($mid, '<>')] ?? null;
+            if ($body === null) { $missing++; continue; }
+            $leak = array_filter($forbid, function ($t) use ($body) { return strpos($body, $t) !== false; });
+            if (strpos($body, $own) === false || $leak) $bad[] = $mid.(strpos($body, $own) === false ? ' lost its own text' : ' kept quoted '.implode('/', $leak));
+        }
+    }
+    if ($bad) $fail[] = count($bad).' replies with wrong quote separation (e.g. '.implode('; ', array_slice($bad, 0, 3)).')';
+    if ($missing) $fail[] = "$missing quote-check threads not imported";
+}
 if ($dupMsg) $fail[] = "$dupMsg duplicated message_id values in threads";
 if ($dupMail) $fail[] = "$dupMail duplicated customer emails";
 if ($orphans) $fail[] = "$orphans conversations without customer";
