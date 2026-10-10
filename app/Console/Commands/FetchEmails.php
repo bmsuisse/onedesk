@@ -1283,7 +1283,7 @@ class FetchEmails extends Command
             }
             $transient_db_error = $e instanceof \App\AttachmentWriteException
                 || $e instanceof \Illuminate\Database\QueryException
-                && (in_array((int) ($e->errorInfo[1] ?? 0), [1205, 1213, 2006, 2013], true)
+                && (in_array((int) ($e->errorInfo[1] ?? 0), [1040, 1205, 1203, 1213, 2002, 2003, 2006, 2013], true)
                     || ($e->errorInfo[0] ?? '') === '40001'
                     // Another mailbox imported the same Message-ID at the same moment (parallel fetch) and won the race:
                     // keep the mail unseen, the next run finds its thread and imports this mailbox's own copy.
@@ -1292,7 +1292,12 @@ class FetchEmails extends Command
                     || (!$extra && (int) ($e->errorInfo[1] ?? 0) === 1062
                         && strpos((string) ($e->errorInfo[2] ?? ''), 'threads_message_id_index') !== false));
             if (!$transient_db_error && !$extra) {
-                $this->setSeen($message, $mailbox);
+                // A flag failure must stay per-message: the original error is still logged below and the folder goes on.
+                try {
+                    $this->setSeen($message, $mailbox);
+                } catch (\Exception $flag_e) {
+                    $this->logError(\Helper::formatException($flag_e));
+                }
             }
             $this->logError(\Helper::formatException($e));
 
