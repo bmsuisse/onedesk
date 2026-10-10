@@ -74,6 +74,11 @@ class Subscription extends Model
      */
     public static $occurred_events = [];
 
+    /**
+     * Subscription rows per mailbox users and events, only set while processEvents() runs.
+     */
+    protected static $subscriptions_memo = null;
+
     public $timestamps = false;
 
     /**
@@ -250,9 +255,18 @@ class Subscription extends Model
             $mailbox_user_ids = $conversation->mailbox->userIdsHavingAccess();
         }
 
-        $subscriptions = self::with('user')->whereIn('user_id', $mailbox_user_ids)
-            ->whereIn('event', $events)
-            ->get();
+        // Raw rows memo, valid for one processEvents() call (null outside of it).
+        $memo_key = md5(implode(',', $mailbox_user_ids).'|'.implode(',', $events));
+        if (self::$subscriptions_memo !== null && isset(self::$subscriptions_memo[$memo_key])) {
+            $subscriptions = clone self::$subscriptions_memo[$memo_key];
+        } else {
+            $subscriptions = self::with('user')->whereIn('user_id', $mailbox_user_ids)
+                ->whereIn('event', $events)
+                ->get();
+            if (self::$subscriptions_memo !== null) {
+                self::$subscriptions_memo[$memo_key] = clone $subscriptions;
+            }
+        }
 
         $subscriptions = \Eventy::filter('subscription.subscriptions', $subscriptions, $conversation, $events, $thread);
 
@@ -316,6 +330,8 @@ class Subscription extends Model
         $notify = [];
         // Mailbox user ids memo, valid for this call only.
         $ids_by_mailbox = [];
+        $threads_by_conversation = [];
+        self::$subscriptions_memo = [];
 
         $delay = now()->addSeconds(Conversation::UNDO_TIMOUT);
 
@@ -359,7 +375,11 @@ class Subscription extends Model
             $threads = [];
             foreach (self::$mediums as $medium) {
                 if (empty($notify[$medium][$event['conversation']->id])) {
-                    $threads = $event['conversation']->getThreads();
+                    $conversation_id = $event['conversation']->id;
+                    if (!isset($threads_by_conversation[$conversation_id])) {
+                        $threads_by_conversation[$conversation_id] = $event['conversation']->getThreads();
+                    }
+                    $threads = $threads_by_conversation[$conversation_id];
                     break;
                 } else {
                     $users[$medium] = $notify[$medium][$event['conversation']->id]['users'];
@@ -468,6 +488,7 @@ class Subscription extends Model
         \Eventy::action('subscription.process_events', $notify);
 
         self::$occurred_events = [];
+        self::$subscriptions_memo = null;
     }
 
     /**
