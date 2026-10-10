@@ -195,6 +195,8 @@ class FetchEmails extends Command
             if ($debug && $debug_log) {
                 $this->line($debug_log);
             }
+
+            gc_collect_cycles();
         }
 
         if ($successfully && count($this->mailboxes)) {
@@ -267,8 +269,6 @@ class FetchEmails extends Command
 
     public function fetch($mailbox)
     {
-        $no_charset = false;
-
         $client = \MailHelper::getMailboxClient($mailbox);
 
         // Connect to the Server.
@@ -298,6 +298,17 @@ class FetchEmails extends Command
             }
         }
 
+        // Always disconnect, also when a folder fails.
+        try {
+            $this->fetchFolders($mailbox, $client);
+        } finally {
+            $client->disconnect();
+        }
+    }
+
+    protected function fetchFolders($mailbox, $client)
+    {
+        $no_charset = false;
         $folders = [];
 
         // Fetch emails from custom IMAP folders.
@@ -442,7 +453,14 @@ class FetchEmails extends Command
                 // We have to sort messages manually, as they can be in non-chronological order
                 $messages = $this->sortMessage($messages);
                 try {
-                    foreach ($messages as $message_id => $message) {
+                    // Release each message (body, attachments) right after processing,
+                    // otherwise the whole bunch stays in memory until the end of it.
+                    $pending = $messages->all();
+                    unset($messages);
+                    foreach (array_keys($pending) as $message_id) {
+                        $message = $pending[$message_id];
+                        unset($pending[$message_id]);
+
                         $this->line('['.date('Y-m-d H:i:s').'] '.$message_index.') '.$message->getSubject());
                         $message_index++;
 
@@ -452,10 +470,12 @@ class FetchEmails extends Command
                 } finally {
                     $this->flushFolderCounters();
                 }
+
+                // Message objects hold reference cycles, free them per bunch to stay under memory_limit.
+                unset($pending, $message);
+                gc_collect_cycles();
             }
         }
-
-        $client->disconnect();
     }
 
     public function flushFolderCounters()
