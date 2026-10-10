@@ -63,6 +63,10 @@ class FetchEmails extends Command
     // Mailboxes whose folder counters need a recount (flushed once per page).
     protected $dirty_mailbox_ids = [];
 
+    // Set by fetchFolders when a folder could not be read completely (count/page error, stopped),
+    // so handle() does not advance fetch_emails_last_successful_run and the fetch monitor sees it.
+    protected $folder_failed = false;
+
     /**
      * Page size when requesting emails from mail server.
      */
@@ -158,6 +162,7 @@ class FetchEmails extends Command
             $this->info('['.date('Y-m-d H:i:s').'] Mailbox: '.$mailbox->name);
 
             $this->mailbox = $mailbox;
+            $this->folder_failed = false;
 
             $debug_log = '';
             
@@ -190,6 +195,10 @@ class FetchEmails extends Command
                         $this->logError('Error: '.$e->getMessage().'; File: '.$e->getFile().' ('.$e->getLine().')').')';
                     }
                 }
+            }
+
+            if ($this->folder_failed) {
+                $successfully = false;
             }
 
             if ($debug && $debug_log) {
@@ -386,6 +395,7 @@ class FetchEmails extends Command
                         // Still failing: fetch a single bunch so we never silently fetch nothing.
                         // The per-bunch error handling below reports what goes wrong.
                         $total_messages = $page_size;
+                        $this->folder_failed = true;
                     }
                 }
             }
@@ -432,6 +442,7 @@ class FetchEmails extends Command
                     } catch (\Exception $e) {
                         $last_error = $e->getMessage().'; File: '.$e->getFile().' ('.$e->getLine().')';
                         $this->logError('Folder: '.$folder->name.'; Charset fallback error: '.$last_error);
+                        $this->folder_failed = true;
                     }
                 }
 
@@ -442,6 +453,7 @@ class FetchEmails extends Command
                     } else {
                         $this->error('['.date('Y-m-d H:i:s').'] '.$last_error);
                         $this->logError('Folder: '.$folder->name.'; Error: '.$last_error);
+                        $this->folder_failed = true;
                     }
                 }
 
@@ -458,6 +470,7 @@ class FetchEmails extends Command
                     $ids = array_keys($messages->all());
                     if ($ids && $ids === $prev_ids) {
                         $this->logError('Folder: '.$folder->name.'; Stopped: '.count($ids).' unseen mails could not be processed');
+                        $this->folder_failed = true;
                         break;
                     }
                     $prev_ids = $ids;
