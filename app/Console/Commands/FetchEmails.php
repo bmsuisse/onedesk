@@ -390,7 +390,7 @@ class FetchEmails extends Command
                 $messages = collect([]);
 
                 try {    
-                    $messages_query = $folder->query()->since(now()->subDays($this->option('days')))->leaveUnread();
+                    $messages_query = $folder->query()->since(now()->subDays($this->option('days')))->leaveUnread()->lazyParse();
                     if ($unseen) {
                         $messages_query->unseen();
                     }
@@ -410,7 +410,7 @@ class FetchEmails extends Command
                     $errors_count = count($client->getErrors());
                     // Solution for MS mailboxes.
                     // https://github.com/freescout-helpdesk/freescout/issues/176
-                    $messages_query = $folder->query()->since(now()->subDays($this->option('days')))->leaveUnread()->setCharset(null);
+                    $messages_query = $folder->query()->since(now()->subDays($this->option('days')))->leaveUnread()->lazyParse()->setCharset(null);
                     if ($unseen) {
                         $messages_query->unseen();
                     }
@@ -460,6 +460,21 @@ class FetchEmails extends Command
                     foreach (array_keys($pending) as $message_id) {
                         $message = $pending[$message_id];
                         unset($pending[$message_id]);
+
+                        // Bodies are parsed one by one (Query::lazyParse), so only one parsed mail is in memory.
+                        try {
+                            $message->parseRawBody($message->tmp_raw_body);
+                            $message->tmp_raw_body = null;
+                        } catch (\Exception $e) {
+                            \Helper::logException($e);
+                            // Mark as read not to fetch the unparsable message again.
+                            try {
+                                $message->markAsRead();
+                            } catch (\Exception $e) {
+                                // Do nothing.
+                            }
+                            continue;
+                        }
 
                         $this->line('['.date('Y-m-d H:i:s').'] '.$message_index.') '.$message->getSubject());
                         $message_index++;

@@ -76,6 +76,9 @@ class Query {
     /** @var string $date_format */
     protected $date_format;
 
+    /** @var bool $lazy_parse Keep the raw body in Message::$tmp_raw_body, the caller parses it per message. */
+    protected $lazy_parse = false;
+
     /** @var bool $soft_fail */
     protected $soft_fail = false;
 
@@ -422,8 +425,8 @@ class Query {
             }
         }
 
-        // Now parse messages body.
-        foreach ($messages as $i => $message) {
+        // Now parse messages body (unless the caller parses them one by one to keep memory low).
+        foreach ($this->lazy_parse ? [] : $messages as $i => $message) {
             try {
                 $message->parseRawBody($message->tmp_raw_body);
                 $message->tmp_raw_body = null;
@@ -682,6 +685,18 @@ class Query {
         return $this->filter(function($id) use($uid){
             return $id < $uid;
         });
+    }
+
+    /**
+     * Do not parse message bodies in get(): the caller has to call
+     * Message::parseRawBody($message->tmp_raw_body) for each message.
+     *
+     * @return $this
+     */
+    public function lazyParse(): Query {
+        $this->lazy_parse = true;
+
+        return $this;
     }
 
     /**
