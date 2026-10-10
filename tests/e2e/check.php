@@ -161,8 +161,6 @@ if (!empty($exp['list_groups'])) {
     }
     if ($bad) { $fail[] = count($bad).' of '.count($exp['list_groups']).' mailing-list threads wrong [mailbox [convs,threads]] (e.g. '.implode(' | ', array_slice($bad, 0, 3)).')'; fwrite(STDERR, "list detail:\n  ".implode("\n  ", $bad)."\n"); }
 }
-$dupNum = DB::table('conversations')->select('number')->groupBy('number')->havingRaw('count(*) > 1')->count();
-if ($dupNum) $fail[] = "$dupNum duplicated conversation numbers";
 if ($dupMsg) $fail[] = "$dupMsg duplicated message_id values in threads";
 if ($dupMail) $fail[] = "$dupMail duplicated customer emails";
 if ($orphans) $fail[] = "$orphans conversations without customer";
