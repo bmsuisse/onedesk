@@ -970,30 +970,45 @@ class Customer extends Model
             $new = true;
         }
 
-        // Set empty fields
-        if ($customer->setData($data, false) || !$customer->id) {
-            $customer->save();
-        }
+        // Customer and email are saved together: an email-less customer would never be found again.
+        try {
+            \DB::transaction(function () use ($customer, $email_obj, $email, $data) {
+                // Set empty fields
+                if ($customer->setData($data, false) || !$customer->id) {
+                    $customer->save();
+                }
 
-        if (empty($email_obj->id) || !$email_obj->customer_id || $email_obj->customer_id != $customer->id) {
-            // Email may have been set in setData().
-            $save_email = true;
-            if (!empty($data['emails']) && is_array($data['emails'])) {
-                foreach ($data['emails'] as $data_email) {
-                    if (is_string($data_email) && $data_email == $email) {
-                        $save_email = false;
-                        break;
+                if (empty($email_obj->id) || !$email_obj->customer_id || $email_obj->customer_id != $customer->id) {
+                    // Email may have been set in setData().
+                    $save_email = true;
+                    if (!empty($data['emails']) && is_array($data['emails'])) {
+                        foreach ($data['emails'] as $data_email) {
+                            if (is_string($data_email) && $data_email == $email) {
+                                $save_email = false;
+                                break;
+                            }
+                            if (is_array($data_email) && !empty($data_email['value']) && $data_email['value'] == $email) {
+                                $save_email = false;
+                                break;
+                            }
+                        }
                     }
-                    if (is_array($data_email) && !empty($data_email['value']) && $data_email['value'] == $email) {
-                        $save_email = false;
-                        break;
+                    if ($save_email) {
+                        $email_obj->customer()->associate($customer);
+                        $email_obj->save();
                     }
                 }
+            });
+        } catch (\Illuminate\Database\QueryException $e) {
+            // Parallel fetcher created the same address first: reuse its customer.
+            $existing = isset($e->errorInfo[1]) && $e->errorInfo[1] == 1062
+                ? Email::with('customer')->where('email', $email)->first()
+                : null;
+            if (!$existing || !$existing->customer) {
+                throw $e;
             }
-            if ($save_email) {
-                $email_obj->customer()->associate($customer);
-                $email_obj->save();
-            }
+            $customer = $existing->customer;
+            $new = false;
         }
 
         // Todo: check phone uniqueness.
