@@ -164,7 +164,7 @@ return [
     |
     */
 
-    'secure' => env('SESSION_SECURE_COOKIE', false),
+    'secure' => env('SESSION_SECURE_COOKIE', env('SESSION_SAME_SITE') === 'none'),
 
     /*
     |--------------------------------------------------------------------------

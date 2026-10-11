@@ -27,6 +27,14 @@ class AppServiceProvider extends ServiceProvider
             return \MailHelper::createTransport();
         });
 
+        \Illuminate\Support\Facades\Date::use(\App\Support\Carbon::class);
+
+        // Behind a TLS-terminating proxy which is not trusted Request::isSecure()
+        // does not follow APP_URL, so make the request secure if APP_URL is https.
+        if (!$this->app->runningInConsole() && \Helper::isHttps()) {
+            $this->app['request']->server->set('HTTPS', 'on');
+        }
+
         // Models observers
         \App\Mailbox::observe(\App\Observers\MailboxObserver::class);
         // Eloquent events for this table are not called automatically, so need to be called manually.
@@ -70,6 +78,31 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register()
     {
+        // URL generator with x_/xs_ params propagation, app_url filter and subdirectory handling.
+        // The extend() callbacks of the framework's RoutingServiceProvider still apply.
+        $this->app->singleton('url', function ($app) {
+            $routes = $app['router']->getRoutes();
+            $app->instance('routes', $routes);
+
+            return new \App\Routing\UrlGenerator(
+                $routes,
+                $app->rebinding('request', function ($app, $request) {
+                    $app['url']->setRequest($request);
+                }),
+                $app['config']['app.asset_url']
+            );
+        });
+
+        // Ignore imap "Unexpected characters at end of address" warnings.
+        $previous_handler = null;
+        $previous_handler = set_error_handler(function ($level, $message, $file = '', $line = 0) use (&$previous_handler) {
+            if (strstr($message, 'Unexpected characters at end of address')) {
+                return true;
+            }
+
+            return $previous_handler ? call_user_func($previous_handler, $level, $message, $file, $line) : false;
+        });
+
         // Forse HTTPS if using CloudFlare "Flexible SSL"
         // https://support.cloudflare.com/hc/en-us/articles/200170416-What-do-the-SSL-options-mean-
         if (\Helper::isHttps()) {
