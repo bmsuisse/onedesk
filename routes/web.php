@@ -13,7 +13,7 @@
 |     php artisan freescout:build
 */
 
-Auth::routes();
+Auth::routes(['login' => false]);
 
 Route::get(config('app.login_path'), 'Auth\LoginController@showLoginForm')->name('login');
 Route::post(config('app.login_path'), 'Auth\LoginController@login');
@@ -35,7 +35,7 @@ if (config('app.dashboard_path')) {
 	Route::get('/', config('app.home_controller'));
 }
 Route::get('/'.config('app.dashboard_path'), 'SecureController@dashboard')->name('dashboard');
-Route::get('/app-logs/app', ['uses' => '\Rap2hpoutre\LaravelLogViewer\LogViewerController@index', 'middleware' => ['auth', 'roles'], 'roles' => ['admin']])->name('logs.app');
+Route::get('/app-logs/app', ['uses' => 'LogViewerController@index', 'middleware' => ['auth', 'roles'], 'roles' => ['admin']])->name('logs.app');
 Route::get('/app-logs/{name?}', ['uses' => 'SecureController@logs', 'middleware' => ['auth', 'roles'], 'roles' => ['admin']])->name('logs');
 Route::post('/app-logs/{name?}', ['uses' => 'SecureController@logsSubmit', 'middleware' => ['auth', 'roles'], 'roles' => ['admin']])->name('logs.action');
 

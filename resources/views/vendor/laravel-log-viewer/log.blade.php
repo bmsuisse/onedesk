@@ -89,13 +89,13 @@
         <div class="list-group div-scroll">
           @foreach($folders as $folder)
             <div class="list-group-item">
-              <a href="?f={{ \Illuminate\Support\Facades\Crypt::encrypt($folder) }}">
+              <a href="?f={{ \Illuminate\Support\Facades\Crypt::encryptString($folder) }}">
                 <span class="fa fa-folder"></span> {{$folder}}
               </a>
               @if ($current_folder == $folder)
                 <div class="list-group folder">
                   @foreach($folder_files as $file)
-                    <a href="?l={{ \Illuminate\Support\Facades\Crypt::encrypt($file) }}&f={{ \Illuminate\Support\Facades\Crypt::encrypt($folder) }}"
+                    <a href="?l={{ \Illuminate\Support\Facades\Crypt::encryptString($file) }}&f={{ \Illuminate\Support\Facades\Crypt::encryptString($folder) }}"
                       class="list-group-item @if ($current_file == $file) llv-active @endif">
                       {{$file}}
                     </a>
@@ -105,7 +105,7 @@
             </div>
           @endforeach
           @foreach($files as $file)
-            <a href="?l={{ \Illuminate\Support\Facades\Crypt::encrypt($file) }}"
+            <a href="?l={{ \Illuminate\Support\Facades\Crypt::encryptString($file) }}"
                class="list-group-item @if ($current_file == $file) llv-active @endif">
               {{$file}}
             </a>
@@ -168,20 +168,20 @@
         @endif
         <div class="p-3">
           @if($current_file)
-            <a href="?dl={{ \Illuminate\Support\Facades\Crypt::encrypt($current_file) }}{{ ($current_folder) ? '&f=' . \Illuminate\Support\Facades\Crypt::encrypt($current_folder) : '' }}">
+            <a href="?dl={{ \Illuminate\Support\Facades\Crypt::encryptString($current_file) }}{{ ($current_folder) ? '&f=' . \Illuminate\Support\Facades\Crypt::encryptString($current_folder) : '' }}">
               <span class="fa fa-download"></span> Download file
             </a>
             {{---
-            <a id="clean-log" href="?clean={{ \Illuminate\Support\Facades\Crypt::encrypt($current_file) }}{{ ($current_folder) ? '&f=' . \Illuminate\Support\Facades\Crypt::encrypt($current_folder) : '' }}">
+            <a id="clean-log" href="?clean={{ \Illuminate\Support\Facades\Crypt::encryptString($current_file) }}{{ ($current_folder) ? '&f=' . \Illuminate\Support\Facades\Crypt::encryptString($current_folder) : '' }}">
               <span class="fa fa-sync"></span> Clean file
             </a>--}}
             -
-            <a id="delete-log" href="?del={{ \Illuminate\Support\Facades\Crypt::encrypt($current_file) }}{{ ($current_folder) ? '&f=' . \Illuminate\Support\Facades\Crypt::encrypt($current_folder) : '' }}">
+            <a id="delete-log" href="?del={{ \Illuminate\Support\Facades\Crypt::encryptString($current_file) }}{{ ($current_folder) ? '&f=' . \Illuminate\Support\Facades\Crypt::encryptString($current_folder) : '' }}">
               <span class="fa fa-trash"></span> Delete file
             </a>
             @if(count($files) > 1)
               -
-              <a id="delete-all-log" href="?delall=true&amp;_token={{ csrf_token() }} {{ ($current_folder) ? '&f=' . \Illuminate\Support\Facades\Crypt::encrypt($current_folder) : '' }}">
+              <a id="delete-all-log" href="?delall=true&amp;_token={{ csrf_token() }}{{ ($current_folder) ? '&f=' . \Illuminate\Support\Facades\Crypt::encryptString($current_folder) : '' }}">
                 <span class="fa fa-trash-alt"></span> Delete all files
               </a>
             @endif
