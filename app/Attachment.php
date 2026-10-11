@@ -75,7 +75,7 @@ class Attachment extends Model
         }
         $mime_type = substr($mime_type, 0, self::MIME_TYPE_MAX_LENGTH);
 
-        $orig_extension = pathinfo($file_name, PATHINFO_EXTENSION);
+        $orig_extension = pathinfo((string) $file_name, PATHINFO_EXTENSION);
 
         // Add underscore to the extension if file has restricted extension.
         $file_name = \Helper::sanitizeUploadedFileName($file_name, $uploaded_file, $content, $mime_type, $upload_mode);
