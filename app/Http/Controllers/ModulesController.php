@@ -118,7 +118,7 @@ class ModulesController extends Controller
                         unset($modules_directory[$i_dir]);
 
                         // Detect if new version is available
-                        if (!empty($dir_module['version']) && version_compare($dir_module['version'], $module['version'], '>')) {
+                        if (!empty($dir_module['version']) && version_compare($dir_module['version'], (string) $module['version'], '>')) {
                             $installed_modules[$i_installed]['new_version'] = $dir_module['version'];
                             $updates_available = true;
                         }
@@ -180,7 +180,7 @@ class ModulesController extends Controller
                 }
 
                 // Get the current version of the module
-                $current_version = $module['version'];
+                $current_version = (string) $module['version'];
             } catch (\Exception $e) {
                 // If there's an exception, skip to the next iteration
                 continue;
@@ -204,7 +204,7 @@ class ModulesController extends Controller
         asort($all_modules);
 
         usort($third_party_modules, function ($a, $b) {
-            return strcasecmp($a['name'], $b['name']);
+            return strcasecmp((string) $a['name'], (string) $b['name']);
         });
 
         return view('modules/modules', [
@@ -234,7 +234,7 @@ class ModulesController extends Controller
             case 'install':
             case 'activate_license':
                 $license = $request->license;
-                $alias = preg_replace("#[^a-zA-Z0-9_\-]#", '', $request->alias);
+                $alias = preg_replace("#[^a-zA-Z0-9_\-]#", '', $request->alias ?? '');
 
                 if (!$license) {
                     $response['msg'] = __('Empty license key');
