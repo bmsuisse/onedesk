@@ -179,7 +179,7 @@ class Module extends Model
 
     public static function normalizeAlias($alias)
     {
-        return trim(strtolower($alias));
+        return trim(strtolower($alias ?? ''));
     }
 
     public static function getByAlias($alias)
@@ -212,7 +212,7 @@ class Module extends Model
      */
     public static function getAppUrl()
     {
-        return parse_url(\Config::get('app.url'), PHP_URL_HOST);
+        return parse_url(\Config::get('app.url') ?? '', PHP_URL_HOST);
     }
 
     /**
@@ -266,7 +266,7 @@ class Module extends Model
                 continue;
             }
 
-            if (!self::isActive($alias) || !version_compare($module->version, $version, '>=')) {
+            if (!self::isActive($alias) || !version_compare($module->version ?? '', $version ?? '', '>=')) {
                 $missing[$alias] = $version;
             }
         }
@@ -276,13 +276,13 @@ class Module extends Model
 
     public static function formatName($name)
     {
-        return preg_replace("/ Module($|.*\[.*\]$)/", '$1', $name);
+        return preg_replace("/ Module($|.*\[.*\]$)/", '$1', $name ?? '');
     }
 
     public static function formatModuleData($module_data)
     {
         // Add (Third-Party).
-        if (self::isThirdParty($module_data) && mb_substr(trim($module_data['name']), -1) != ']') {
+        if (self::isThirdParty($module_data) && mb_substr(trim($module_data['name'] ?? ''), -1) != ']') {
             $module_data['name'] = $module_data['name'].' ['.__('Third-Party').']';
         }
         return $module_data;
@@ -290,8 +290,8 @@ class Module extends Model
 
     public static function isThirdParty($module_data)
     {
-        if (\App\Module::isOfficial($module_data['detailsUrl']) 
-            && $module_data['author'] != 'FreeScout'
+        if (\App\Module::isOfficial($module_data['detailsUrl'] ?? null)
+            && ($module_data['author'] ?? null) != 'FreeScout'
         ) {
             return true;
         } else {
@@ -459,7 +459,7 @@ class Module extends Model
                 } elseif (!empty($license_details['download_link'])) {
                     // If a download link is available, proceed to update the module from the URL
                     $result = self::updateFromUrl($module, $license_details['download_link'], $result);
-                } elseif ($license_details['status'] && $result['msg'] = self::getErrorMessage($license_details['status'])) {
+                } elseif (($license_details['status'] ?? null) && $result['msg'] = self::getErrorMessage($license_details['status'])) {
                     //$result['msg'] = ;
                 } else {
                     $result['msg'] = __('Error occurred').': '.json_encode($license_details);
