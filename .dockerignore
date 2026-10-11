@@ -1,0 +1,11 @@
+.git
+.claude
+.serena
+tests/e2e/.work
+tests/e2e/dump
+node_modules
+storage/logs/*
+storage/framework/cache/*
+storage/framework/sessions/*
+storage/framework/views/*
+.env

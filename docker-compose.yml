@@ -1,0 +1,25 @@
+# docker compose up -d   then open http://localhost:8080  (create the first admin on the web installer / `docker compose exec app php artisan freescout:create-user`)
+services:
+  app:
+    build: .
+    ports: ["8080:80"]
+    environment:
+      APP_KEY: ${APP_KEY:?set APP_KEY, e.g. docker compose run --rm app php artisan key:generate --show}
+      APP_URL: ${APP_URL:-http://localhost:8080}
+      APP_ENV: production
+      DB_HOST: db
+      DB_DATABASE: onedesk
+      DB_USERNAME: onedesk
+      DB_PASSWORD: ${DB_PASSWORD:-onedesk}
+    volumes: ["storage:/var/www/html/storage"]
+    depends_on: [db]
+  db:
+    image: mariadb:10.11
+    environment:
+      MARIADB_DATABASE: onedesk
+      MARIADB_USER: onedesk
+      MARIADB_PASSWORD: ${DB_PASSWORD:-onedesk}
+      MARIADB_RANDOM_ROOT_PASSWORD: "1"
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    volumes: ["db:/var/lib/mysql"]
+volumes: { storage: {}, db: {} }

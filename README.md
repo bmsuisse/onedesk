@@ -9,6 +9,16 @@ Self-hosted help desk and shared mailbox. OneDesk is a fork of [FreeScout](https
 - Symfony Mailer for outgoing mail: SMTP, sendmail, PHP `mail()`, OAuth2 (XOAUTH2)
 - Parallel IMAP fetching: one process per mailbox (`APP_FETCH_PARALLEL`, default 4, `1` = sequential)
 
+## Docker
+
+```bash
+docker build -t onedesk .
+export APP_KEY=$(docker run --rm onedesk php artisan key:generate --show)
+docker compose up -d        # app on http://localhost:8080, MariaDB, scheduler and queue worker included
+```
+
+Set `APP_URL` (and `DB_PASSWORD`) for a real deployment. Mail, uploads and logs live in the `storage` volume.
+
 ## Install
 
 ```bash
