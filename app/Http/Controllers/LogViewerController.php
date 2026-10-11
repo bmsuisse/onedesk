@@ -1,20 +1,14 @@
 <?php
 
-namespace Rap2hpoutre\LaravelLogViewer;
+namespace App\Http\Controllers;
 
 use Illuminate\Support\Facades\Crypt;
-
-if (class_exists("\\Illuminate\\Routing\\Controller")) {	
-    class BaseController extends \Illuminate\Routing\Controller {}	
-} elseif (class_exists("Laravel\\Lumen\\Routing\\Controller")) {	
-    class BaseController extends \Laravel\Lumen\Routing\Controller {}	
-}
+use Rap2hpoutre\LaravelLogViewer\LaravelLogViewer;
 
 /**
  * Class LogViewerController
- * @package Rap2hpoutre\LaravelLogViewer
  */
-class LogViewerController extends BaseController
+class LogViewerController extends Controller
 {
     /**
      * @var \Illuminate\Http\Request
@@ -48,11 +42,11 @@ class LogViewerController extends BaseController
     {
         $folderFiles = [];
         if ($this->request->input('f')) {
-            $this->log_viewer->setFolder(Crypt::decrypt($this->request->input('f')));
+            $this->log_viewer->setFolder(Crypt::decryptString($this->request->input('f')));
             $folderFiles = $this->log_viewer->getFolderFiles(true);
         }
         if ($this->request->input('l')) {
-            $this->log_viewer->setFile(Crypt::decrypt($this->request->input('l')));
+            $this->log_viewer->setFile(Crypt::decryptString($this->request->input('l')));
         }
 
         if ($early_return = $this->earlyReturn()) {
@@ -93,7 +87,7 @@ class LogViewerController extends BaseController
     private function earlyReturn()
     {
         if ($this->request->input('f')) {
-            $this->log_viewer->setFolder(Crypt::decrypt($this->request->input('f')));
+            $this->log_viewer->setFolder(Crypt::decryptString($this->request->input('f')));
         }
 
         if ($this->request->input('dl')) {
@@ -104,7 +98,7 @@ class LogViewerController extends BaseController
         } elseif ($this->request->has('del')) {
             app('files')->delete($this->pathFromInput('del'));
             return $this->redirect($this->request->url());
-        } elseif ($this->request->has('delall') && \Session::token() == $this->request->get('_token')) {
+        } elseif ($this->request->has('delall') && hash_equals(csrf_token(), (string)$this->request->input('_token'))) {
             $files = ($this->log_viewer->getFolderName())
                         ? $this->log_viewer->getFolderFiles(true)
                         : $this->log_viewer->getFiles(true);
@@ -123,7 +117,7 @@ class LogViewerController extends BaseController
      */
     private function pathFromInput($input_string)
     {
-        return $this->log_viewer->pathToLogFile(Crypt::decrypt($this->request->input($input_string)));
+        return $this->log_viewer->pathToLogFile(Crypt::decryptString($this->request->input($input_string)));
     }
 
     /**
