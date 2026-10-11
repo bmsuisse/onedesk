@@ -8,7 +8,7 @@ if (! function_exists('__j')) {
     {
         $text = __($key, $replace, $locale);
 
-        return strtr($text, [
+        return strtr($text ?? '', [
             '"' => '&quot;',
             "'" => '&#039;',
         ]);
@@ -21,10 +21,10 @@ if (! function_exists('__j')) {
     {
         if ($escape_replacements) {
             foreach ($replace as $key => $value) {
-                $replace[$key] = htmlspecialchars($value);
+                $replace[$key] = htmlspecialchars($value ?? '');
             }
         }
-        return __(htmlspecialchars($key), $replace, $locale);
+        return __(htmlspecialchars($key ?? ''), $replace, $locale);
     }
 
     /**

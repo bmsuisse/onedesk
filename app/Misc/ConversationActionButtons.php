@@ -164,15 +164,15 @@ class ConversationActionButtons
                     // Modified logic for responsive display
                 if ($location === self::LOCATION_TOOLBAR) {
                     // Show in toolbar if it's a toolbar action
-                    return $action['location'] === self::LOCATION_TOOLBAR;
+                    return ($action['location'] ?? null) === self::LOCATION_TOOLBAR;
                 } elseif ($location === self::LOCATION_DROPDOWN) {
                         // Show in dropdown if explicitly flagged or if it's a dropdown action
-                        return $action['location'] === self::LOCATION_DROPDOWN ||
-                               ( ! empty($action['show_in_dropdown']) && $action['location'] === self::LOCATION_TOOLBAR );
+                        return ($action['location'] ?? null) === self::LOCATION_DROPDOWN ||
+                               ( ! empty($action['show_in_dropdown']) && ($action['location'] ?? null) === self::LOCATION_TOOLBAR );
                 }
             }
 
-                return $action['location'] === $location;
+                return ($action['location'] ?? null) === $location;
         });
     }
 }
