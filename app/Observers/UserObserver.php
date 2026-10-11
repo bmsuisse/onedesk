@@ -27,7 +27,7 @@ class UserObserver
     public function creating(User $user)
     {
         // This is a hack for backward compatibility.
-        if ($user->type == 0 && preg_match("#^fs.*@example\.org$#", $user->email)
+        if ($user->type == 0 && preg_match("#^fs.*@example\.org$#", $user->email ?? '')
         ) {
             $user->type = User::TYPE_ROBOT;
         }
