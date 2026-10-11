@@ -291,7 +291,7 @@ class Kernel extends ConsoleKernel
         // to set the host for EHLO command, if it is empty it uses [127.0.0.1].
         // G Suite sometimes rejects emails with EHLO [127.0.0.1].
         if (empty($_SERVER['SERVER_NAME'])) {
-            $_SERVER['SERVER_NAME'] = parse_url(config('app.url'), PHP_URL_HOST);
+            $_SERVER['SERVER_NAME'] = parse_url((string) config('app.url'), PHP_URL_HOST);
         }
 
         require base_path('routes/console.php');
