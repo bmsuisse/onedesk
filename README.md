@@ -1,24 +1,48 @@
 # OneDesk
 
-> **OneDesk is a fork of [FreeScout](https://github.com/freescout-help-desk/freescout)** maintained by [BMS Suisse](https://github.com/bmsuisse). It is licensed under the [AGPL-3.0](LICENSE), like the original. FreeScout is copyright of its respective authors. Changes in this fork: parallel mailbox fetching (`APP_FETCH_PARALLEL`) and bug fixes. See the git history for details.
+> **OneDesk is a fork of [FreeScout](https://github.com/freescout-help-desk/freescout)** maintained by [BMS Suisse](https://github.com/bmsuisse), licensed under the [AGPL-3.0](LICENSE) like the original. FreeScout is copyright of its respective authors.
 
-## What OneDesk improves (mail fetching)
+OneDesk keeps FreeScout's features and adds a faster, safer mail pipeline on a modern stack.
 
-- **Parallel fetching, on by default:** one child process per mailbox, 4 at a time (`APP_FETCH_PARALLEL=4`; set `1` to fetch sequentially). No global sleep ramp in this mode. E2E: 1,730 mails across 20 mailboxes in ~21 s.
-- **Less work per mail:** about half the DB queries per imported mail (38.7 down to roughly 18-23), lazy parsing of message bodies, bunch-wise processing with lower memory use.
-- **Mail is no longer lost or duplicated**, among others:
-  - unseen paging drift that skipped mails
-  - Bcc/To fan-out into several mailboxes
-  - parallel races (message-id, attachment files, conversation numbers)
-  - mails killed mid-import
-  - failed extra-mailbox copies
-  - same Message-ID twice in one bunch
-- **Runs on current PHP:** the e2e suite (fetching all cases + web smoke) is green on **PHP 8.5** as well as 7.4 (default e2e image; `PHPV=74 tests/e2e/run.sh up quick` runs 7.4). Fixed for PHP >= 8.4, which no longer ships ext-imap: sender addresses written as `addr@host (Comment)` (typical for bounces) were dropped.
-- **More robust parsing:** multipart without boundary, nested single-child multipart, boundary text inside bodies, invalid UTF-8 plain-text bodies, huge/cyclic garbage mails.
-- **Honest monitoring:** failed folder counts/pages no longer record the run as successful, so the fetch monitor can alert. Transient DB errors are retried instead of marking the mail Seen.
-- **Tests:** `tests/e2e/run.sh test` runs the real `freescout:fetch-emails` against Dovecot and MariaDB in Docker with generated, realistic mail (attachments, malformed MIME, fan-out, mailing lists, bounces, kills) and checks exact counts.
+## Stack
 
-Known open: [#2](https://github.com/bmsuisse/onedesk/issues/2) (IMAP body fetch marks mail Seen before import), [#8](https://github.com/bmsuisse/onedesk/issues/8) (poison messages are retried every run). Idle-refresh speed with very many mailboxes is not yet measured or optimised.
+| | FreeScout upstream | OneDesk |
+|---|---|---|
+| Framework | Laravel 5.5 | **Laravel 12** |
+| PHP | 7.4 - 8.x | **8.2 - 8.5** (tested on 8.5) |
+| Outgoing mail | SwiftMailer | **Symfony Mailer** (SMTP, sendmail, PHP mail(), XOAUTH2) |
+| Dependencies | ~100 patched vendor copies in `overrides/` | stock vendor packages; only FreeScout-specific patches kept in `overrides/` or `app/` |
+
+## What OneDesk improves
+
+**Mail fetching**
+- Parallel fetching by default: one child process per mailbox, 4 at a time (`APP_FETCH_PARALLEL=4`, `1` = sequential).
+- About half the DB queries per imported mail, lazy body parsing, batched processing.
+- Mail is no longer lost or duplicated: unseen-paging drift, Bcc/To fan-out into several mailboxes, parallel races, mails killed mid-import, failed extra-mailbox copies, repeated Message-IDs.
+- More robust parsing (missing boundaries, nested multipart, invalid UTF-8, huge or cyclic structures) and honest fetch monitoring.
+
+**UI performance**
+- Fewer queries on the dashboard, customer profile, settings pages and search; new composite index on `conversations`.
+
+**Mail sending**
+- Symfony Mailer replaces SwiftMailer. The outgoing "TLS" setting now *requires* STARTTLS (no silent downgrade to clear text).
+
+**Security**
+- Zip extraction is hardened against Zip Slip and unsafe symlinks.
+- Log viewer and translation manager keep their path-traversal and XSS fixes.
+- Optional Cloudflare client IP (`APP_CLOUDFLARE_IS_USED`) is honoured only from Cloudflare or trusted proxies.
+
+## Upgrading from FreeScout / earlier OneDesk
+
+- Back up the database first and run `php artisan migrate` (adds `activity_logs` columns `event` and `batch_uuid`).
+- **Third-party FreeScout modules are written against Laravel 5.5 and will not work until they are ported.**
+- Mail settings are unchanged in the UI. With encryption "none", the server connection still upgrades to TLS when the server offers it.
+
+## Tests
+
+`tests/e2e/run.sh test` runs the real `freescout:fetch-emails` against Dovecot and MariaDB in Docker (default image PHP 8.5, `PHPV=81` / `PHPV=74` for older). `tests/e2e/suites/send.sh` checks every outgoing mail path against a mail sink, and `tests/e2e/web.py` is a browser smoke test of the web UI. Docker is the only requirement.
+
+Known issues: the e2e cases `B` and `folders` fail intermittently (a duplicate-key race in parallel fetching), see the issue tracker.
 
 ---
 
@@ -98,7 +122,7 @@ Mobile apps support the same functionality and modules as the web version of you
 FreeScout is a pure PHP/MySQL application, so it can be easily deployed even on a [shared hosting](https://github.com/freescout-help-desk/freescout/wiki/Choosing-a-Server).
 
   * Nginx / Apache / IIS
-  * PHP 7.4 - 8.x
+  * PHP 8.2 - 8.5
   * MySQL 5.0+ / MariaDB 5.0+ / PostgreSQL
 
 There are no minimum system requirements (CPU / RAM) – FreeScout will run on any system.
