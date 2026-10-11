@@ -445,7 +445,7 @@ class User extends Authenticatable
      */
     public static function generateRandomPassword($length = 8)
     {
-        return str_random($length);
+        return Str::random($length);
     }
 
     /**
@@ -453,13 +453,13 @@ class User extends Authenticatable
      */
     public static function getDummyPassword()
     {
-        return encrypt('dummy_'.str_random(8));
+        return encrypt('dummy_'.Str::random(8));
     }
 
     public function isDummyPassword()
     {
         $decrypted_password = \Helper::decrypt($this->password);
-        return preg_match("#^dummy_#", $this->password) || preg_match("#^dummy_#", $decrypted_password);
+        return preg_match("#^dummy_#", $this->password ?? '') || preg_match("#^dummy_#", $decrypted_password ?? '');
         //return Hash::check($this->getDummyPassword(), $this->password);
     }
 
@@ -1221,9 +1221,9 @@ class User extends Authenticatable
     public function getInitials($length = 2)
     {
         if ($length == 2) {
-            return strtoupper(mb_substr($this->first_name, 0, 1)).strtoupper(mb_substr($this->last_name, 0, 1));
+            return strtoupper(mb_substr($this->first_name ?? '', 0, 1)).strtoupper(mb_substr($this->last_name ?? '', 0, 1));
         } else {
-            return strtoupper(mb_substr($this->first_name, 0, 1));
+            return strtoupper(mb_substr($this->first_name ?? '', 0, 1));
         }
     }
 
@@ -1440,7 +1440,7 @@ class User extends Authenticatable
         // Update email.
         $email_suffix = User::EMAIL_DELETED_SUFFIX.date('YmdHis');
         // We have to truncate email to avoid "Data too long" error.
-        $this->email = mb_substr($this->email, 0, User::EMAIL_MAX_LENGTH - mb_strlen($email_suffix)).$email_suffix;
+        $this->email = mb_substr($this->email ?? '', 0, User::EMAIL_MAX_LENGTH - mb_strlen($email_suffix)).$email_suffix;
 
         $this->save();
 
