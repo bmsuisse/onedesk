@@ -9,7 +9,7 @@ use App\Thread;
 use App\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
-use Validator;
+use Illuminate\Support\Facades\Validator;
 
 class OpenController extends Controller
 {
@@ -229,10 +229,10 @@ class OpenController extends Controller
         }
 
         $view_attachment = false;
-        $file_ext = strtolower(pathinfo($attachment->file_name, PATHINFO_EXTENSION));
+        $file_ext = strtolower(pathinfo($attachment->file_name ?? '', PATHINFO_EXTENSION));
 
         // Some file type should be viewed in the browser instead of downloading.
-        if (in_array($file_ext, config('app.viewable_attachments'))) {
+        if (in_array($file_ext, (array) config('app.viewable_attachments'))) {
             $view_attachment = true;
         }
         // If HTML file is renamed into .txt for example it will be shown by the browser as HTML.
@@ -270,7 +270,7 @@ class OpenController extends Controller
         // nosniff replaces the protection sandbox was providing here: the browser
         // is not allowed to reinterpret an audio/* response as HTML.
         // https://github.com/freescout-help-desk/freescout/pull/5597
-        if (preg_match('#^audio/.*$#', $attachment->mime_type)) {
+        if (preg_match('#^audio/.*$#', $attachment->mime_type ?? '')) {
              //$csp_header_value .= ' allow-scripts';
             $csp_header_value .= ' allow-same-origin';
         }
