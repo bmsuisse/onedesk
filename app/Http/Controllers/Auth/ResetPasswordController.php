@@ -134,7 +134,7 @@ class ResetPasswordController extends Controller
 
     protected function throttleKey(Request $request)
     {
-        return strtolower($request->ip()) . '|reset_password';
+        return strtolower((string) $request->ip()) . '|reset_password';
     }
 
     protected function sendLockoutResponse(Request $request)
