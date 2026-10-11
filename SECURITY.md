@@ -1,17 +1,17 @@
 # Security Policy
 
-Read about **[FreeScout's Security](https://freescout.net/security/)**.
+Read about **[OneDesk security policy](https://github.com/bmsuisse/onedesk/security/policy)**.
 
 ## Reporting a Vulnerability
 
-  * Report a security vulnerability in the **Application Core**: https://github.com/freescout-help-desk/freescout/security/advisories
-  * Report a security vulnerability in a **Module**: https://freescout.net/contact-us/
+  * Report a security vulnerability in the **Application Core**: https://github.com/bmsuisse/onedesk/security/advisories
+  * Report a security vulnerability in a **Module**: contact the module author
 
 ## Guidelines
 
   * One issue per Advisory — do not put several issues into one Advisory, as GitHub will not assign a CVE to such an Advisory.
   * CVEs are requested after the fix for the vulnerability is released.
-  * If you found an issue related to the `APP_LIMIT_USER_CUSTOMER_VISIBILITY=true` mode, make sure to read the [FAQ](https://github.com/freescout-help-desk/freescout/wiki/FAQ#is-it-possible-to-have-separate-contactscustomers-per-mailbox).
+  * If you found an issue related to the `APP_LIMIT_USER_CUSTOMER_VISIBILITY=true` mode, make sure to read the [FAQ](https://github.com/bmsuisse/onedesk/wiki/FAQ#is-it-possible-to-have-separate-contactscustomers-per-mailbox).
   * Support agents are allowed to move conversations to any mailbox, even to ones they don't have access to.
   * Drafts are viewable/discardable by any member of the mailbox where they are created.
-  * FreeScout loads external images in received emails, and there is a Module allowing to disable loading external images: https://freescout.net/module/block-external-images/.
+  * OneDesk loads external images in received emails.

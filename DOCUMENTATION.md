@@ -1,3 +1,3 @@
 # Documentation
 
-Documentation: https://github.com/freescout-help-desk/freescout/wiki
+Documentation: https://github.com/bmsuisse/onedesk/wiki

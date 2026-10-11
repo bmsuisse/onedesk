@@ -1,5 +1,5 @@
 {
-    "name": "freescout-helpdesk/freescout",
+    "name": "bmsuisse/onedesk",
     "description": "Free self-hosted helpdesk and shared mailbox (Zendesk / Help Scout alternative)",
     "keywords": [
         "helpdesk",
@@ -10,13 +10,7 @@
     "authors": [
         {
             "name": "The FreeScout Team",
-            "email": "support@freescout.net"
-        }
-    ],
-    "repositories": [
-        {
-            "type": "git",
-            "url": "https://github.com/freescout-help-desk/Purifier.git"
+            "email": "dominik.peter@bmsuisse.ch"
         }
     ],
     "require": {
@@ -33,7 +27,6 @@
         "laravel/helpers": "^1.4",
         "laravel/tinker": "^2.10",
         "laravel/ui": "^4.6",
-        "mews/purifier": "dev-customized",
         "nwidart/laravel-modules": "2.7.0",
         "rachidlaasri/laravel-installer": "4.0.2",
         "rap2hpoutre/laravel-log-viewer": "*",
@@ -41,7 +34,8 @@
         "symfony/polyfill-intl-idn": "*",
         "tormjens/eventy": "0.5.4",
         "watson/rememberable": "*",
-        "webklex/php-imap": "4.1.1"
+        "webklex/php-imap": "4.1.1",
+        "ezyang/htmlpurifier": "^4.19"
     },
     "require-dev": {
         "mockery/mockery": "^1.6",
@@ -56,7 +50,8 @@
             "overrides/erusev/parsedown/"
         ],
         "files": [
-            "app/Misc/Functions.php"
+            "app/Misc/Functions.php",
+            "overrides/mews/purifier/src/helpers.php"
         ],
         "psr-4": {
             "App\\": "app/",
@@ -76,7 +71,8 @@
             "Codedge\\Updater\\": "overrides/codedge/laravel-selfupdater/src/",
             "Lord\\Laroute\\": "overrides/lord/laroute/src/",
             "Axn\\Laroute\\": "overrides/axn/laravel-laroute/src/",
-            "Barryvdh\\TranslationManager\\": "overrides/barryvdh/laravel-translation-manager/src/"
+            "Barryvdh\\TranslationManager\\": "overrides/barryvdh/laravel-translation-manager/src/",
+            "Mews\\Purifier\\": "overrides/mews/purifier/src/"
         },
         "exclude-from-classmap": [
             "Modules/",

@@ -21,7 +21,6 @@ class ComposerStaticInitbf8dc242a640d7c740f283f226d0bdb4
         '2203a247e6fda86070a5e4e07aed533a' => __DIR__ . '/..' . '/symfony/clock/Resources/now.php',
         'a1105708a18b76903365ca1c4aa61b02' => __DIR__ . '/..' . '/symfony/translation/Resources/functions.php',
         '09f6b20656683369174dd6fa83b7e5fb' => __DIR__ . '/..' . '/symfony/polyfill-uuid/bootstrap.php',
-        '2cffec82183ee1cea088009cef9a6fc3' => __DIR__ . '/..' . '/ezyang/htmlpurifier/library/HTMLPurifier.composer.php',
         '37a3dc5111fe8f707ab4c132ef1dbc62' => __DIR__ . '/..' . '/guzzlehttp/guzzle/src/functions_include.php',
         '47e1160838b5e5a10346ac4084b58c23' => __DIR__ . '/..' . '/laravel/prompts/src/helpers.php',
         '6124b4c8570aa390c21fafd04a26c69f' => __DIR__ . '/..' . '/myclabs/deep-copy/src/DeepCopy/deep_copy.php',
@@ -30,6 +29,7 @@ class ComposerStaticInitbf8dc242a640d7c740f283f226d0bdb4
         'e39a8b23c42d4e1452234d762b03835a' => __DIR__ . '/..' . '/ramsey/uuid/src/functions.php',
         '662a729f963d39afe703c9d9b7ab4a8c' => __DIR__ . '/..' . '/symfony/polyfill-php83/bootstrap.php',
         '9d2b9fc6db0f153a0a149fefb182415e' => __DIR__ . '/..' . '/symfony/polyfill-php84/bootstrap.php',
+        '2cffec82183ee1cea088009cef9a6fc3' => __DIR__ . '/..' . '/ezyang/htmlpurifier/library/HTMLPurifier.composer.php',
         '476ca15b8d69b04665cd879be9cb4c68' => __DIR__ . '/..' . '/laravel/framework/src/Illuminate/Collections/functions.php',
         '265b4faa2b3a9766332744949e83bf97' => __DIR__ . '/..' . '/laravel/framework/src/Illuminate/Collections/helpers.php',
         'c7a3c339e7e14b60e06a2d7fcce9476b' => __DIR__ . '/..' . '/laravel/framework/src/Illuminate/Events/functions.php',
@@ -40,14 +40,14 @@ class ComposerStaticInitbf8dc242a640d7c740f283f226d0bdb4
         '493c6aea52f6009bab023b26c21a386a' => __DIR__ . '/..' . '/laravel/framework/src/Illuminate/Support/functions.php',
         '58571171fd5812e6e447dce228f52f4d' => __DIR__ . '/..' . '/laravel/framework/src/Illuminate/Support/helpers.php',
         '17d016dc52a631c1e74d2eb8fdd57342' => __DIR__ . '/..' . '/laravel/helpers/src/helpers.php',
-        'cb61d74ad51d00867155534456b38b23' => __DIR__ . '/..' . '/mews/purifier/src/helpers.php',
         'c72349b1fe8d0deeedd3a52e8aa814d8' => __DIR__ . '/..' . '/mockery/mockery/library/helpers.php',
         'ce9671a430e4846b44e1c68c7611f9f5' => __DIR__ . '/..' . '/mockery/mockery/library/Mockery.php',
         '9f394da3192a168c4633675768d80428' => __DIR__ . '/..' . '/nwidart/laravel-modules/src/helpers.php',
         'ec07570ca5a812141189b1fa81503674' => __DIR__ . '/..' . '/phpunit/phpunit/src/Framework/Assert/Functions.php',
         'd7354eb4c8441fbf08eec280b61c7c73' => __DIR__ . '/..' . '/rachidlaasri/laravel-installer/src/Helpers/functions.php',
         '72b1e3f4a2af9b30b3f137b3ec2057fc' => __DIR__ . '/..' . '/spatie/laravel-activitylog/src/helpers.php',
-        'b3709fe79d9d3d527d2a936c35802426' => __DIR__ . '/../..' . '/app/Misc/Functions.php',
+        '0895aea9598b58617ede34edb49efca8' => __DIR__ . '/../..' . '/app/Misc/Functions.php',
+        'd62dd9eb0ec898c9908975c486d4a45e' => __DIR__ . '/../..' . '/overrides/mews/purifier/src/helpers.php',
     );
 
     public static $prefixLengthsPsr4 = array (
@@ -488,7 +488,7 @@ class ComposerStaticInitbf8dc242a640d7c740f283f226d0bdb4
         ),
         'Mews\\Purifier\\' =>
         array (
-            0 => __DIR__ . '/..' . '/mews/purifier/src',
+            0 => __DIR__ . '/../..' . '/overrides/mews/purifier/src',
         ),
         'Lord\\Laroute\\' =>
         array (
@@ -4608,13 +4608,13 @@ class ComposerStaticInitbf8dc242a640d7c740f283f226d0bdb4
         'Lord\\Laroute\\Routes\\Collection' => __DIR__ . '/../..' . '/overrides/lord/laroute/src/Routes/Collection.php',
         'Lord\\Laroute\\Routes\\Exceptions\\ZeroRoutesException' => __DIR__ . '/../..' . '/overrides/lord/laroute/src/Routes/Exceptions/ZeroRoutesException.php',
         'MailboxesTableSeeder' => __DIR__ . '/../..' . '/database/seeds/MailboxesTableSeeder.php',
-        'Mews\\Purifier\\Casts\\CleanHtml' => __DIR__ . '/..' . '/mews/purifier/src/Casts/CleanHtml.php',
-        'Mews\\Purifier\\Casts\\CleanHtmlInput' => __DIR__ . '/..' . '/mews/purifier/src/Casts/CleanHtmlInput.php',
-        'Mews\\Purifier\\Casts\\CleanHtmlOutput' => __DIR__ . '/..' . '/mews/purifier/src/Casts/CleanHtmlOutput.php',
-        'Mews\\Purifier\\Casts\\WithConfig' => __DIR__ . '/..' . '/mews/purifier/src/Casts/WithConfig.php',
-        'Mews\\Purifier\\Facades\\Purifier' => __DIR__ . '/..' . '/mews/purifier/src/Facades/Purifier.php',
-        'Mews\\Purifier\\Purifier' => __DIR__ . '/..' . '/mews/purifier/src/Purifier.php',
-        'Mews\\Purifier\\PurifierServiceProvider' => __DIR__ . '/..' . '/mews/purifier/src/PurifierServiceProvider.php',
+        'Mews\\Purifier\\Casts\\CleanHtml' => __DIR__ . '/../..' . '/overrides/mews/purifier/src/Casts/CleanHtml.php',
+        'Mews\\Purifier\\Casts\\CleanHtmlInput' => __DIR__ . '/../..' . '/overrides/mews/purifier/src/Casts/CleanHtmlInput.php',
+        'Mews\\Purifier\\Casts\\CleanHtmlOutput' => __DIR__ . '/../..' . '/overrides/mews/purifier/src/Casts/CleanHtmlOutput.php',
+        'Mews\\Purifier\\Casts\\WithConfig' => __DIR__ . '/../..' . '/overrides/mews/purifier/src/Casts/WithConfig.php',
+        'Mews\\Purifier\\Facades\\Purifier' => __DIR__ . '/../..' . '/overrides/mews/purifier/src/Facades/Purifier.php',
+        'Mews\\Purifier\\Purifier' => __DIR__ . '/../..' . '/overrides/mews/purifier/src/Purifier.php',
+        'Mews\\Purifier\\PurifierServiceProvider' => __DIR__ . '/../..' . '/overrides/mews/purifier/src/PurifierServiceProvider.php',
         'Mockery\\Adapter\\Phpunit\\Extension' => __DIR__ . '/..' . '/mockery/mockery/library/Mockery/Adapter/Phpunit/Extension.php',
         'Mockery\\Adapter\\Phpunit\\Extension\\Subscriber\\TestFinishedSubscriber' => __DIR__ . '/..' . '/mockery/mockery/library/Mockery/Adapter/Phpunit/Extension/Subscriber/TestFinishedSubscriber.php',
         'Mockery\\Adapter\\Phpunit\\Extension\\Subscriber\\TestSuiteStartedSubscriber' => __DIR__ . '/..' . '/mockery/mockery/library/Mockery/Adapter/Phpunit/Extension/Subscriber/TestSuiteStartedSubscriber.php',

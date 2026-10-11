@@ -666,6 +666,10 @@ class Mail
      */
     public static function sendEmailToDevs($subject, $body, $attachments = [], $from_user = null)
     {
+        if (!\Config::get('app.freescout_email')) {
+            return false;
+        }
+
         // Configure mail driver according to Mailbox settings
         \MailHelper::setSystemMailDriver();
 

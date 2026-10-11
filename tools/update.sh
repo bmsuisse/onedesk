@@ -83,7 +83,7 @@ if [ $git_inited != 1 ]; then
 	fi
 	
 	git init
-	git remote add origin https://github.com/freescout-helpdesk/freescout.git
+	git remote add origin https://github.com/bmsuisse/onedesk.git
 	git fetch
 
 	# If user stops here next time he will get: "Your Git repository is on a wrong branch"

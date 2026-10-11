@@ -110,7 +110,7 @@ class GithubRepositoryType extends AbstractRepositoryType implements SourceRepos
         $release_name = preg_replace("#[^0-9\.]#", '', $version);
 
         // Build Zipball URL instead of obtaining it from JSON ($release->zipball_url).
-        // https://api.github.com/repos/freescout-help-desk/freescout/zipball/refs/tags/1.8.230
+        // https://api.github.com/repos/bmsuisse/onedesk/zipball/refs/tags/1.8.230
         $zipball_url = self::GITHUB_API_URL.'/repos/'.$this->config['repository_vendor'].'/'.$this->config['repository_name'].'/zipball/refs/tags/'.$release_name;
 
         $storageFilename = "{$release_name}.zip";

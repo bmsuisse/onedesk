@@ -138,7 +138,7 @@ function showPermissionsError()
 
     showError('Web installer could not write data into <strong>'.$root_dir_no_slash.'/.env</strong> file. Please give your web server user (<strong>'.get_current_user().'</strong>) write permissions in <code>'.$root_dir_no_slash.'</code> folder:<br/><br/>
 <textarea rows="4" readonly="readonly" style="font-size:12px;">sudo chgrp '.get_current_user().' '.$root_dir_no_slash.'
-sudo chmod ug+rwx '.$root_dir_no_slash.'</textarea><br/>If it does not help, please follow <a href="http://freescout.net/install/#82-manual-installation" target="_blank">Manual installation</a> instructions.');
+sudo chmod ug+rwx '.$root_dir_no_slash.'</textarea><br/>If it does not help, please follow <a href="https://github.com/bmsuisse/onedesk#82-manual-installation" target="_blank">Manual installation</a> instructions.');
 }
 
 function getSubdirectory()

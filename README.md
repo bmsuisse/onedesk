@@ -1,200 +1,65 @@
 # OneDesk
 
-> **OneDesk is a fork of [FreeScout](https://github.com/freescout-help-desk/freescout)** maintained by [BMS Suisse](https://github.com/bmsuisse), licensed under the [AGPL-3.0](LICENSE) like the original. FreeScout is copyright of its respective authors.
-
-OneDesk keeps FreeScout's features and adds a faster, safer mail pipeline on a modern stack.
+Self-hosted help desk and shared mailbox. OneDesk is a fork of [FreeScout](https://github.com/freescout-help-desk/freescout), maintained by [BMS Suisse](https://github.com/bmsuisse) and licensed under the [AGPL-3.0](LICENSE).
 
 ## Stack
 
-| | FreeScout upstream | OneDesk |
-|---|---|---|
-| Framework | Laravel 5.5 | **Laravel 12** |
-| PHP | 7.4 - 8.x | **8.2 - 8.5** (tested on 8.5) |
-| Outgoing mail | SwiftMailer | **Symfony Mailer** (SMTP, sendmail, PHP mail(), XOAUTH2) |
-| Dependencies | ~100 patched vendor copies in `overrides/` | stock vendor packages; only FreeScout-specific patches kept in `overrides/` or `app/` |
+- Laravel 12, PHP 8.2 - 8.5 (tested on 8.5)
+- MySQL / MariaDB (PostgreSQL is supported by the code but not covered by the tests)
+- Symfony Mailer for outgoing mail: SMTP, sendmail, PHP `mail()`, OAuth2 (XOAUTH2)
+- Parallel IMAP fetching: one process per mailbox (`APP_FETCH_PARALLEL`, default 4, `1` = sequential)
 
-## What OneDesk improves
+## Install
 
-**Mail fetching**
-- Parallel fetching by default: one child process per mailbox, 4 at a time (`APP_FETCH_PARALLEL=4`, `1` = sequential).
-- About half the DB queries per imported mail, lazy body parsing, batched processing.
-- Mail is no longer lost or duplicated: unseen-paging drift, Bcc/To fan-out into several mailboxes, parallel races, mails killed mid-import, failed extra-mailbox copies, repeated Message-IDs.
-- More robust parsing (missing boundaries, nested multipart, invalid UTF-8, huge or cyclic structures) and honest fetch monitoring.
+```bash
+git clone https://github.com/bmsuisse/onedesk.git
+cd onedesk
+composer install --no-dev
+cp .env.example .env && php artisan key:generate
+```
 
-**UI performance**
-- Fewer queries on the dashboard, customer profile, settings pages and search; new composite index on `conversations`.
+Then open the site in a browser and follow the web installer, or run `php artisan migrate --force`. Point the web server at `public/`, and add a cron entry that runs `php artisan schedule:run` every minute.
 
-**Mail sending**
-- Symfony Mailer replaces SwiftMailer. The outgoing "TLS" setting now *requires* STARTTLS (no silent downgrade to clear text).
+`tools/install.sh` automates this on Ubuntu, and `tools/update.sh` updates an existing installation.
 
-**Security**
-- Zip extraction is hardened against Zip Slip and unsafe symlinks.
-- Log viewer and translation manager keep their path-traversal and XSS fixes.
-- Optional Cloudflare client IP (`APP_CLOUDFLARE_IS_USED`) is honoured only from Cloudflare or trusted proxies.
+## Updating
 
-## Upgrading from FreeScout / earlier OneDesk
+Back up the database, pull the new release, run `composer install --no-dev` and `php artisan migrate --force`, then `php artisan freescout:clear-cache`. The built-in updater in the admin panel downloads releases from this repository.
 
-- Back up the database first and run `php artisan migrate` (adds `activity_logs` columns `event` and `batch_uuid`).
-- **Third-party FreeScout modules are written against Laravel 5.5 and will not work until they are ported.**
-- Mail settings are unchanged in the UI. With encryption "none", the server connection still upgrades to TLS when the server offers it.
+## Configuration
 
-## Tests
+Settings live in `.env` (see `.env.example`). Notable ones:
 
-`tests/e2e/run.sh test` runs the real `freescout:fetch-emails` against Dovecot and MariaDB in Docker (default image PHP 8.5, `PHPV=81` / `PHPV=74` for older). `tests/e2e/suites/send.sh` checks every outgoing mail path against a mail sink, and `tests/e2e/web.py` is a browser smoke test of the web UI. Docker is the only requirement.
+| Variable | Purpose |
+|---|---|
+| `APP_URL` | Public URL. Requests for other hosts are refused unless listed in `APP_TRUSTED_HOSTS`. |
+| `APP_FETCH_PARALLEL` | Number of mailboxes fetched at once. |
+| `APP_TRUSTED_PROXIES` | Reverse proxies whose `X-Forwarded-*` headers are trusted. |
+| `APP_CLOUDFLARE_IS_USED` | Use `CF-Connecting-IP`, but only for requests coming from Cloudflare or a trusted proxy. |
+| `ONEDESK_MODULES_API` | Optional module directory / license server. Empty by default (disabled). |
 
-Known issues: the e2e cases `B` and `folders` fail intermittently (a duplicate-key race in parallel fetching), see the issue tracker.
-
----
-
-# Free Self-Hosted Zendesk & Help Scout Alternative
-
-<div align="center">
-
-<img src="https://raw.githubusercontent.com/freescout-help-desk/freescout/master/public/img/logo-300.png" width="180" height="180" />
-
-</div>
-
-**FreeScout** is the super lightweight and powerful free open source help desk and shared inbox built with PHP (Laravel framework). Now you can enjoy free Zendesk & Help Scout without giving up privacy or locking yourself into a service you don't control. FreeScout has been developed from scratch and does not use any copyrighted Help Scout or Zendesk materials.
-
-If you want to support the project feel free to **star this repository**. It helps to increase the visibility of the project and let people know that it is valuable. Thanks for your support!
-
-![FreeScout](https://freescout-helpdesk.github.io/img/screenshots/screenshot.png)
-
-## Table of Contents
-   * [Demo](#demo)
-   * [Features](#features)
-   * [Mobile Apps](#mobile-apps)
-   * [Requirements](#requirements)
-   * [Installation](#installation)
-   * [Images & One-Click Installs](#images--one-click-installs)
-   * [Modules](#modules)
-   * [Tools & Integrations](#tools--integrations)
-   * [News & Updates](#news--updates)
-   * [Contributing](#contributing)
-   * [Screenshots](#screenshots)
-
-## Demo
-
-**[Live Demo](https://demo.freescout.net)**
-
-## Features
-
-  * Omnichannel — FreeScout centralizes in one place all customer conversations received by email, [WhatsApp](https://freescout.net/whatsapp/), Telegram, Facebook, Slack, Live Chat and more.
-  * [AI-powered](https://github.com/freescout-help-desk/AiIntegration) and super efficient.
-  * Unlimited support agents, tickets, mailboxes, etc.
-  * [Secure](https://freescout.net/security) by design.
-  * Mobile-friendly.
-  * Multilingual (translated into 33 languages).
-  * Seamless email integration (via SMTP, IMAP, POP3, etc).
-  * Modern OAuth authentication for Microsoft Office 365 and Google Workspace.
-  * Native [S3 storage](https://github.com/freescout-help-desk/S3Storage) support.
-  * Fully supports screen readers (for visually impaired).
-  * Web installer & updater.
-  * Starred conversations.
-  * Push notifications.
-  * Following conversations.
-  * Auto replies.
-  * Internal notes.
-  * Forwarding / Merging / Moving conversations.
-  * Phone conversations.
-  * Sending new conversations to multiple recipients at once.
-  * Collision detection – notice is shown when two agents open the same conversation.
-  * Automatic refreshing of the conversations list without the need to reload the page.
-  * Pasting screenshots from the clipboard into the reply area.
-  * Flexible notifications for user agents.
-  * Open tracking.
-  * Powerful search.
-
-A full list of features is available [here](https://freescout.net/#custom_html-3).
-
-Need anything else? [Suggest features](https://freescout.net/request-feature/).
-
-## Mobile Apps
-
-Mobile apps support the same functionality and modules as the web version of your FreeScout installation. Both support agents and administrators can use mobile apps.
-
-<a href="https://freescout.net/android-app/" target="_blank" rel="nofollow"><img alt="Android App" src="https://freescout-helpdesk.github.io/img/apps/android.png" width="200px" /></a> <a href="https://freescout.net/ios-app/" target="_blank" rel="nofollow"><img alt="iOS App" src="https://freescout-helpdesk.github.io/img/apps/ios.png?v=1" width="200px" /></a>
-
-[MacOS Menu Bar App](https://github.com/jonalaniz/scouter)
-
-## Requirements
-
-FreeScout is a pure PHP/MySQL application, so it can be easily deployed even on a [shared hosting](https://github.com/freescout-help-desk/freescout/wiki/Choosing-a-Server).
-
-  * Nginx / Apache / IIS
-  * PHP 8.2 - 8.5
-  * MySQL 5.0+ / MariaDB 5.0+ / PostgreSQL
-
-There are no minimum system requirements (CPU / RAM) – FreeScout will run on any system.
-
-## Installation
-
-[Installation Guide](https://github.com/freescout-help-desk/freescout/wiki/Installation-Guide)
-
-## Images & One-Click Installs
-
-* [Docker Image](https://freescout.net/docker/)
-* [Pikapods](https://freescout.net/pikapods/) — Open-source apps hosting (Fully managed)
-* [Zenith](https://freescout.net/zenith/) — Open-source apps hosting (Fully managed)
-* [Hostinger](https://freescout.net/hostinger/) — VPS with automatic backups included
-* [Softaculous](http://www.softaculous.com/apps/customersupport/FreeScout) — cPanel, Plesk, ISPmanager, H-Sphere, DirectAdmin, InterWorx
-* [Fantastico](http://ff3.netenberg.com/visitors/scripts/freescout/view) — cPanel, DirectAdmin, ISP Manager, ISP Config
-* [Cloudron](https://cloudron.io/store/net.freescout.cloudronapp.html)
-* [Ubuntu](https://github.com/freescout-help-desk/freescout/wiki/Installation-Guide#interactive-installation-bash-script-ubuntu) — Bash script
-
-[More one-click installs…](https://freescout.net/one-click-installs/)
+Outgoing "TLS" encryption requires STARTTLS and refuses to send in clear text if the server does not offer it.
 
 ## Modules
 
-* [Official Modules](https://freescout.net/modules/)
-* [Community Modules](https://freescout.net/community-modules/)
+OneDesk keeps FreeScout's module system, but it runs on Laravel 12. Modules written for FreeScout (Laravel 5.5) will not work until they are ported.
 
-## Tools & Integrations
-  
-  * [API](https://api-docs.freescout.net/)
-  * [Migrate to FreeScout](http://freescout.net/migrate/) (from any help desk)
-  * [Zapier](https://freescout.net/zapier/)
-  * [Make](https://freescout.net/make-integration/) (Integromat)
+## Tests
 
-## News & Updates
+Docker is the only requirement.
 
-Don't miss news, updates and new modules!
+```bash
+tests/e2e/run.sh test              # real freescout:fetch-emails against Dovecot + MariaDB (PHP 8.5; PHPV=81 for 8.1)
+bash tests/e2e/suites/send.sh      # every outgoing mail path against a mail sink
+tests/e2e/run.sh profile 1         # sampling profile of one mailbox fetch
+```
 
-[Email Newsletter](https://freescout.net/subscribe/) | [Facebook](https://freescout.net/facebook/) | [Twitter](https://freescout.net/twitter/) | [YouTube](https://freescout.net/youtube/) | [Telegram](https://freescout.net/telegram/) | [RSS](https://freescout.net/feed/)
+`tests/e2e/web.py` is a browser smoke test of the web UI. Known issue: the e2e case `folders` fails intermittently (killed fetch runs leave child processes running).
 
-## Contributing
+## Security
 
-* [Support the project by leaving a feedback](https://github.com/freescout-help-desk/freescout/issues/288)
-* [Development Guide](https://github.com/freescout-help-desk/freescout/wiki/Development-Guide)
-* [Todo list](https://github.com/freescout-help-desk/freescout/labels/help%20wanted)
-* [Translate](https://github.com/freescout-help-desk/freescout/wiki/Translate)
+See [SECURITY.md](SECURITY.md).
 
-## Screenshots
+## Credits
 
-Dashboard:
-
-![Dashboard](https://freescout-helpdesk.github.io/img/screenshots/dashboard.png)
-
-Conversation:
-
-![Conversation](https://freescout-helpdesk.github.io/img/screenshots/conversation.png)
-
-Drafting reply with AI:
-
-![Mailbox connection settings page](https://freescout-helpdesk.github.io/img/screenshots/draft-reply-with-ai.png)
-
-Notifications:
-
-![Notifications](https://freescout-helpdesk.github.io/img/screenshots/notifications.png)
-
-Push notification:
-
-![Push notification](https://freescout-helpdesk.github.io/img/screenshots/push.png)
-
-Web installer:
-
-![Web installer](https://freescout-helpdesk.github.io/img/screenshots/installer.png)
-
-Login page:
-
-![Login page](https://freescout-helpdesk.github.io/img/screenshots/freescout-login.png)
+OneDesk is based on FreeScout by its contributors. FreeScout's copyright notices and the AGPL-3.0 license are kept in [LICENSE](LICENSE).

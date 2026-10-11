@@ -107,7 +107,7 @@ class EnvironmentManager
         'APP_URL='.$request->app_url."\n\n".
         '# Improve security'."\n".
         'SESSION_SECURE_COOKIE='.(\Helper::isHttps($request->app_url) ? 'true' : '')."\n\n".
-        '# Timezones: https://github.com/freescout-helpdesk/freescout/wiki/PHP-Timezones'."\n".
+        '# Timezones: https://github.com/bmsuisse/onedesk/wiki/PHP-Timezones'."\n".
         '# Comment it to use default timezone from php.ini'."\n".
         'APP_TIMEZONE='.$request->app_timezone."\n\n".
         '# Default language'."\n".

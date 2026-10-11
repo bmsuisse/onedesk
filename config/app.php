@@ -158,29 +158,31 @@ return [
     | FreeScout website
     |-------------------------------------------------------------------------
     */
-    'freescout_url' => 'https://freescout.net',
+    'freescout_url' => 'https://github.com/bmsuisse/onedesk',
 
     /*
     |--------------------------------------------------------------------------
     | FreeScout API
     |-------------------------------------------------------------------------
     */
-    'freescout_api' => 'https://api.freescout.net/wp-json/',
-    'freescout_alt_api' => 'https://cdn.freescout.net/wp-json/',
+    // Third-party module directory / license server (WordPress REST API). Empty = disabled.
+    'freescout_api' => env('ONEDESK_MODULES_API', ''),
+    'freescout_alt_api' => env('ONEDESK_MODULES_ALT_API', ''),
 
     /*
     |--------------------------------------------------------------------------
     | FreeScout repository
     |-------------------------------------------------------------------------
     */
-    'freescout_repo' => 'https://freescout.net/github',
+    'freescout_repo' => 'https://github.com/bmsuisse/onedesk',
 
     /*
     |--------------------------------------------------------------------------
     | FreeScout email
     |-------------------------------------------------------------------------
     */
-    'freescout_email' => 'support@freescout.net',
+    // Receives translations sent from the translation manager. Empty = sending disabled.
+    'freescout_email' => env('ONEDESK_DEVS_EMAIL', ''),
 
     /*
     |--------------------------------------------------------------------------
@@ -435,8 +437,8 @@ return [
     |--------------------------------------------------------------------------
     | When proxy is specified, all requests to external resources are made vie this proxy.
     |
-    | Enter your proxy address in .env file if freescout.net is not available from your server
-    | (access to freescout.net is required to obtain official modules).
+    | Enter your proxy address in .env file if the module directory is not available from your server
+    | (access to the module directory is required to obtain official modules).
     |
     | Example: https://123.45.67.89:4321
     |--------------------------------------------------------------------------
@@ -499,7 +501,7 @@ return [
     | in mailboxes they are assigned to. This option does not affect admin users.
     | 
     | Before creating an Security Advisory make sure to read about this parameter in Guidelines:
-    | https://github.com/freescout-help-desk/freescout/security/policy
+    | https://github.com/bmsuisse/onedesk/security/policy
     |-------------------------------------------------------------------------
     */
     'limit_user_customer_visibility'    => env('APP_LIMIT_USER_CUSTOMER_VISIBILITY', false),
@@ -650,6 +652,7 @@ return [
         Codedge\Updater\UpdaterServiceProvider::class,
         Axn\Laroute\ServiceProvider::class, // vendored in overrides/ (the packages do not support Laravel 12)
         App\Providers\FreeScoutAuthServiceProvider::class,
+        Mews\Purifier\PurifierServiceProvider::class, // vendored in overrides/
     ],
 
     /*
@@ -710,6 +713,7 @@ return [
         // Autodiscovery did not work for this one, becasuse it's composer.json
         // does not have a `extra` section.
         'Updater'      => Codedge\Updater\UpdaterFacade::class,
+        'Purifier'     => Mews\Purifier\Facades\Purifier::class,
     ],
 
 ];

@@ -71,7 +71,7 @@ return array(
     'Monolog\\' => array($vendorDir . '/monolog/monolog/src/Monolog'),
     'Modules\\' => array($baseDir . '/Modules'),
     'Mockery\\' => array($vendorDir . '/mockery/mockery/library/Mockery'),
-    'Mews\\Purifier\\' => array($vendorDir . '/mews/purifier/src'),
+    'Mews\\Purifier\\' => array($baseDir . '/overrides/mews/purifier/src'),
     'Lord\\Laroute\\' => array($baseDir . '/overrides/lord/laroute/src'),
     'League\\Uri\\' => array($vendorDir . '/league/uri', $vendorDir . '/league/uri-interfaces'),
     'League\\MimeTypeDetection\\' => array($vendorDir . '/league/mime-type-detection/src'),

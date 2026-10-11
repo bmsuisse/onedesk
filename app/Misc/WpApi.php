@@ -59,6 +59,12 @@ class WpApi
     {
         self::$lastError = null;
 
+        if (!self::url($endpoint, $alternative_api) || !\Config::get('app.freescout_api')) {
+            self::$lastError = ['code' => 0, 'message' => 'The module directory is not configured (ONEDESK_MODULES_API).'];
+
+            return [];
+        }
+
         try {
             $response = self::httpRequest($method, self::url($endpoint, $alternative_api), $params);
         } catch (\Exception $e) {

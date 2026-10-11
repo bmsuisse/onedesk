@@ -115,7 +115,7 @@ fi
 
 sudo mkdir -p $install_path
 sudo chown www-data:www-data $install_path
-sudo git clone https://github.com/freescout-helpdesk/freescout $install_path
+sudo git clone https://github.com/bmsuisse/onedesk $install_path
 sudo chown -R www-data:www-data $install_path
 sudo find $install_path -type f -exec chmod 664 {} \;    
 sudo find $install_path -type d -exec chmod 775 {} \;
@@ -267,7 +267,7 @@ if [ -z "$schedule_cron" ]; then
 
 # Cron job for automatic updates
 # Configure it to install updates automatically as required by modern cybersecurity standards:
-# https://github.com/freescout-helpdesk/freescout/wiki/Installation-Guide#92-cron-job-for-automatic-updates
+# https://github.com/bmsuisse/onedesk/wiki/Installation-Guide#92-cron-job-for-automatic-updates
 #0 1 * * * $install_path/tools/update.sh --yes >> $install_path/storage/logs/update.log" >> /tmp/wwwdatacron
     sudo crontab -u www-data /tmp/wwwdatacron
 fi
@@ -300,12 +300,12 @@ already been done for you).
 After finishing installation in order to make sure your installation satisfies
 modern cybersecurity standards you may want to configure automatic updates
 as described in this instruction:
-https://github.com/freescout-helpdesk/freescout/wiki/Installation-Guide#92-cron-job-for-automatic-updates
+https://github.com/bmsuisse/onedesk/wiki/Installation-Guide#92-cron-job-for-automatic-updates
 
 Also read Final Configuration instructions:
-https://github.com/freescout-helpdesk/freescout/wiki/Installation-Guide#10-final-configuration
+https://github.com/bmsuisse/onedesk/wiki/Installation-Guide#10-final-configuration
 and FAQ:
-https://github.com/freescout-helpdesk/freescout/wiki/FAQ
+https://github.com/bmsuisse/onedesk/wiki/FAQ
 
 --------------------------------------------------------
 

@@ -255,7 +255,7 @@ if (!empty($_POST)) {
                                         } else {
                                             $alerts[] = [
                                                 'type' => 'danger',
-                                                'text' => 'Something went wrong... Please <strong><a href="https://freescout.net/download/" target="_blank">download</a></strong> the latest version and extract it into your application folder replacing existing files. After that click "Migrate DB" button.<br/><br/><pre>'.htmlspecialchars($output).'</pre>',
+                                                'text' => 'Something went wrong... Please <strong><a href="https://github.com/bmsuisse/onedesk" target="_blank">download</a></strong> the latest version and extract it into your application folder replacing existing files. After that click "Migrate DB" button.<br/><br/><pre>'.htmlspecialchars($output).'</pre>',
                                             ];
                                         }
                                     } else {
