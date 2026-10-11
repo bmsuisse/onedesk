@@ -615,7 +615,7 @@ class FetchEmails extends Command
                             // Checking the name will lead to mistakes if someone attaches a file with such name.
                             // Dashes are converted to space.
                             //in_array(strtoupper($attachment->getName()), ['RFC822', 'DELIVERY STATUS', 'DELIVERY STATUS NOTIFICATION', 'UNDELIVERED MESSAGE'])
-                            preg_match('/delivery-status/', strtolower($attachment->content_type))
+                            preg_match('/delivery-status/', strtolower((string)$attachment->content_type))
                             // 7.3.1 The Message/rfc822 (primary) subtype. A Content-Type of "message/rfc822" indicates that the body contains an encapsulated message, with the syntax of an RFC 822 message
                             //|| $attachment->content_type == 'message/rfc822'
                         ) {
@@ -644,7 +644,7 @@ class FetchEmails extends Command
             if (!$is_bounce) {
                 if ($message->getFrom()) {
                     $original_from = $this->formatEmailList($message->getFrom());
-                    $original_from = $original_from[0];
+                    $original_from = $original_from[0] ?? '';
                     $is_bounce = preg_match('/^mailer\-daemon@/i', $original_from);
                     if ($is_bounce) {
                         $this->line('['.date('Y-m-d H:i:s').'] Bounce detected by From header: '.$original_from);
@@ -836,7 +836,7 @@ class FetchEmails extends Command
                                 } elseif (\MailHelper::isGeneratedMessageId($prev_thread->message_id)) {
                                     // Try to extract the original Message-ID from the mismatched thread's raw headers
                                     // https://github.com/freescout-help-desk/freescout/issues/5308#issuecomment-4218652527
-                                    $original_id = trim(\MailHelper::getHeader($prev_thread->headers, 'Message-ID'));
+                                    $original_id = trim((string)\MailHelper::getHeader($prev_thread->headers, 'Message-ID'));
                                     $correct_thread = null;
 
                                     // Search the current mailbox for BOTH the original ID and this mailbox's generated hash of the original ID
@@ -982,7 +982,7 @@ class FetchEmails extends Command
                 // Only if the email has been sent to one mailbox.
                 && count($to) == 1 && count($cc) == 0
                 // We need to replace also any potential <style></style> tags.
-                && preg_match("/^[\s]*".self::FWD_AS_CUSTOMER_COMMAND."/su", strtolower(trim(\Helper::stripTags($body))))
+                && preg_match("/^[\s]*".self::FWD_AS_CUSTOMER_COMMAND."/su", strtolower(trim((string)\Helper::stripTags($body))))
             ) {
                 // Try to get "From:" from body.
                 $original_sender = $this->getOriginalSenderFromFwd($body);
@@ -1782,7 +1782,7 @@ class FetchEmails extends Command
                         $parts[0] = preg_replace('/<hr[^>]*>\s*<div[^>]+id="(?:x_)?divRplyFwdMsg".*$/is', '', $parts[0]) ?: $parts[0];
                     }
                     // Check if part contains any real text.
-                    $text = \Helper::htmlToText($parts[0]);
+                    $text = (string)\Helper::htmlToText($parts[0]);
                     $text = trim($text);
                     $text = preg_replace('/^\s+/mu', '', $text);
 
