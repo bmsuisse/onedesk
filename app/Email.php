@@ -77,7 +77,7 @@ class Email extends Model
 
     public function getNameFromEmail()
     {
-        return explode('@', $this->email)[0];
+        return explode('@', $this->email ?? '')[0];
     }
 
     public static function create($email, $customer_id, $type = self::TYPE_WORK)
@@ -97,6 +97,6 @@ class Email extends Model
 
     public static function sanitizeLength($email_address)
     {
-        return substr($email_address, Email::MAX_LENGTH*(-1));
+        return substr($email_address ?? '', Email::MAX_LENGTH*(-1));
     }
 }
