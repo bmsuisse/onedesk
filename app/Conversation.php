@@ -550,7 +550,7 @@ class Conversation extends Model
     public function getDateTitle()
     {
         if ($this->threads_count == 1) {
-            $title = __('Created by :person', ['person' => __(ucfirst(self::$persons[$this->source_via]))]);
+            $title = __('Created by :person', ['person' => __(ucfirst(self::$persons[$this->source_via] ?? ''))]);
             $title .= '<br/>'.User::dateFormat($this->created_at, 'M j, Y H:i');
         } else {
             $person = '';
@@ -1178,8 +1178,8 @@ class Conversation extends Model
     {
         if (!empty(request()->folder_id)) {
             return request()->folder_id;
-        } elseif (!empty(Input::get('folder_id'))) {
-            return Input::get('folder_id');
+        } elseif (!empty(request()->input('folder_id'))) {
+            return request()->input('folder_id');
         }
 
         return '';
@@ -2416,11 +2416,11 @@ class Conversation extends Model
         }
 
         $conversation = new Conversation();
-        $conversation->type = $data['type'];
-        $conversation->subject = $data['subject'];
-        $conversation->mailbox_id = $data['mailbox_id'];
+        $conversation->type = $data['type'] ?? null;
+        $conversation->subject = $data['subject'] ?? null;
+        $conversation->mailbox_id = $data['mailbox_id'] ?? null;
         $conversation->source_via = $source_via;
-        $conversation->source_type = $data['source_type'];
+        $conversation->source_type = $data['source_type'] ?? null;
         $conversation->customer_id = $customer->id;
         $conversation->customer_email = $customer->getMainEmail().'';
         $conversation->state = $data['state'] ?? Conversation::STATE_PUBLISHED;
@@ -2543,7 +2543,7 @@ class Conversation extends Model
         $mailbox_ids = [];
 
         // Like is case insensitive.
-        $like = '%'.mb_strtolower($q).'%';
+        $like = '%'.mb_strtolower((string) $q).'%';
 
         if (!$query_conversations) {
             $query_conversations = Conversation::select('conversations.*');
