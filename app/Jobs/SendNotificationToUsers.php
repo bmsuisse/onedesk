@@ -75,7 +75,7 @@ class SendNotificationToUsers implements ShouldQueue
         // Do not send email notifications to support agents
         // if the email is a bounce and mail server send limit reached.
         // https://github.com/freescout-help-desk/freescout/issues/4806
-        if ($last_thread->isBounce() && strstr($last_thread->body, 'message limit exceeded')) {
+        if ($last_thread->isBounce() && strstr((string) $last_thread->body, 'message limit exceeded')) {
             return;
         }
 
@@ -231,11 +231,11 @@ class SendNotificationToUsers implements ShouldQueue
      * This method is called after attempts had finished.
      * At this stage method has access only to variables passed in constructor.
      *
-     * @param Exception $exception
+     * @param \Throwable $exception
      *
      * @return void
      */
-    public function failed(\Exception $e)
+    public function failed(\Throwable $e)
     {
         // Write to activity log
         activity()
