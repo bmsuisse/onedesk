@@ -7,6 +7,11 @@ use Illuminate\Database\Eloquent\Model;
 class Folder extends Model
 {
     /**
+     * Waiting since calculated in advance by preloadWaitingSince().
+     */
+    public $waiting_since_preloaded = null;
+
+    /**
      * Folders types (ids from HelpScout interface).
      */
     const TYPE_UNASSIGNED = 1;
@@ -355,6 +360,10 @@ class Folder extends Model
      */
     public function getWaitingSince()
     {
+        if ($this->waiting_since_preloaded !== null) {
+            return $this->waiting_since_preloaded;
+        }
+
         // Get oldest active conversation.
         $conversation = $this->getWaitingSinceQuery()
             ->where('state', Conversation::STATE_PUBLISHED)
@@ -365,6 +374,44 @@ class Folder extends Model
             return $conversation->getWaitingSince($this);
         } else {
             return '';
+        }
+    }
+
+    /**
+     * Calculate waiting since of plain folders with one query.
+     * Folders with a custom query (Mine, indirect, changed by a filter) are skipped
+     * and keep using getWaitingSince().
+     */
+    public static function preloadWaitingSince($folders)
+    {
+        $plain = $folders->filter(function ($folder) {
+            if ($folder->type == self::TYPE_MINE || $folder->isIndirect() || $folder->getWaitingSinceField() != 'last_reply_at') {
+                return false;
+            }
+            $query = $folder->getWaitingSinceQuery();
+            $default = $folder->conversations();
+
+            return $query->toSql() == $default->toSql() && $query->getBindings() == $default->getBindings();
+        });
+        if ($plain->isEmpty()) {
+            return;
+        }
+
+        $rows = Conversation::whereIn('folder_id', $plain->pluck('id'))
+            ->where('state', Conversation::STATE_PUBLISHED)
+            ->where('status', Conversation::STATUS_ACTIVE)
+            ->groupBy('folder_id')
+            ->selectRaw('folder_id, min(last_reply_at) as oldest, sum(last_reply_at is null) as no_reply')
+            ->get()
+            ->keyBy('folder_id');
+
+        foreach ($plain as $folder) {
+            $row = $rows->get($folder->id);
+            if (!$row) {
+                $folder->waiting_since_preloaded = '';
+            } elseif (!$row->no_reply) {
+                $folder->waiting_since_preloaded = \App\User::dateDiffForHumans($row->oldest);
+            }
         }
     }
 

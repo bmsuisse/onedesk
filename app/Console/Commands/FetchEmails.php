@@ -19,6 +19,7 @@ use App\Subscription;
 use App\Thread;
 use App\User;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 //use Webklex\IMAP\Client;
 
 class FetchEmails extends Command
@@ -26,6 +27,9 @@ class FetchEmails extends Command
     const FWD_AS_CUSTOMER_COMMAND = '@fwd';
 
     const MAX_SLEEP = 500000;
+
+    // Customers of the message being processed (sanitized email => Customer).
+    protected $message_customers = [];
 
     /**
      * The name and signature of the console command.
@@ -55,7 +59,13 @@ class FetchEmails extends Command
      */
     public $mailboxes;
 
-    public $extra_import = [];
+
+    // Mailboxes whose folder counters need a recount (flushed once per page).
+    protected $dirty_mailbox_ids = [];
+
+    // Set by fetchFolders when a folder could not be read completely (count/page error, stopped),
+    // so handle() does not advance fetch_emails_last_successful_run and the fetch monitor sees it.
+    protected $folder_failed = false;
 
     /**
      * Page size when requesting emails from mail server.
@@ -130,6 +140,7 @@ class FetchEmails extends Command
             }
         }
 
+        $fetched = 0;
         foreach ($this->mailboxes as $mailbox) {
             if (!$mailbox->isInActive() || !$mailbox->isActive()) {
                 continue;
@@ -143,10 +154,15 @@ class FetchEmails extends Command
                 $sleep = self::MAX_SLEEP;
             }
 
+            // Throttle between mailboxes only, no need to wait after the last one.
+            if ($fetched++) {
+                usleep($sleep);
+            }
+
             $this->info('['.date('Y-m-d H:i:s').'] Mailbox: '.$mailbox->name);
 
             $this->mailbox = $mailbox;
-            $this->extra_import = [];
+            $this->folder_failed = false;
 
             $debug_log = '';
             
@@ -181,20 +197,15 @@ class FetchEmails extends Command
                 }
             }
 
+            if ($this->folder_failed) {
+                $successfully = false;
+            }
+
             if ($debug && $debug_log) {
                 $this->line($debug_log);
             }
 
-            // Import emails sent to several mailboxes at once.
-            if (count($this->extra_import)) {
-                $this->line('['.date('Y-m-d H:i:s').'] Importing emails sent to several mailboxes at once: '.count($this->extra_import));
-                foreach ($this->extra_import as $i => $extra_import) {
-                    $this->line('['.date('Y-m-d H:i:s').'] '.($i+1).') '.$extra_import['message']->getSubject());
-                    $this->processMessage($extra_import['message'], $extra_import['message_id'], $extra_import['mailbox'], [], true);
-                }
-            }
-
-            usleep($sleep);
+            gc_collect_cycles();
         }
 
         if ($successfully && count($this->mailboxes)) {
@@ -207,13 +218,13 @@ class FetchEmails extends Command
 
         $this->info('['.date('Y-m-d H:i:s').'] Fetching finished');
 
-        $this->extra_import = [];
         $this->mailbox = null;
         $this->mailboxes = [];
     }
 
     // ponytail: busy-poll pool, no per-mailbox retry; a mail sent to several
-    // mailboxes may race across children (duplicate-entry guard already covers it).
+    // mailboxes may race across children: the loser hits 1062 on threads.message_id, keeps the mail
+    // unseen and imports its own copy on the next run (see processMessage catch).
     protected function fetchParallel(array $ids, int $parallel)
     {
         $queue = $ids;
@@ -237,6 +248,10 @@ class FetchEmails extends Command
             foreach ($running as $id => $p) {
                 if (!$p->isRunning()) {
                     $this->line($p->getOutput());
+                    // Killed (137) or fatal children would otherwise vanish silently.
+                    if ($p->getExitCode() !== 0) {
+                        $this->logError('Mailbox '.$id.': fetch process failed with exit code '.$p->getExitCode().'; '.trim($p->getErrorOutput()));
+                    }
                     unset($running[$id]);
                 }
             }
@@ -264,8 +279,6 @@ class FetchEmails extends Command
 
     public function fetch($mailbox)
     {
-        $no_charset = false;
-
         $client = \MailHelper::getMailboxClient($mailbox);
 
         // Connect to the Server.
@@ -295,6 +308,17 @@ class FetchEmails extends Command
             }
         }
 
+        // Always disconnect, also when a folder fails.
+        try {
+            $this->fetchFolders($mailbox, $client);
+        } finally {
+            $client->disconnect();
+        }
+    }
+
+    protected function fetchFolders($mailbox, $client)
+    {
+        $no_charset = false;
         $folders = [];
 
         // Fetch emails from custom IMAP folders.
@@ -347,42 +371,51 @@ class FetchEmails extends Command
             //      to fetch an empty UID list.
             // Webklex Query::limit()/forPage() are 1-indexed, so pages start at 1.
             //
-            // NOTE: this assumes a stable search set across pages (fetch_unseen=0). With
-            // fetch_unseen=1, processMessage() marks messages \Seen mid-loop, shrinking
-            // the unseen set between pages and shifting forPage() — a separate,
-            // pre-existing drift (#4047), not addressed here.
-            try {
-                $count_query = $folder->query()->since(now()->subDays($this->option('days')))->leaveUnread();
-                if ($unseen) {
-                    $count_query->unseen();
+            // NOTE: with fetch_unseen=1, processMessage() marks messages \Seen mid-loop,
+            // shrinking the unseen set between pages (#4047), so page N would skip mails.
+            // For unseen we always request page 1 (the remaining unseen mails) and stop
+            // on an empty page. The loop stays bounded by $total_pages.
+            $total_messages = null;
+            while ($total_messages === null) {
+                try {
+                    $count_query = $folder->query()->since(now()->subDays($this->option('days')))->leaveUnread();
+                    if ($unseen) {
+                        $count_query->unseen();
+                    }
+                    if ($no_charset) {
+                        $count_query->setCharset(null);
+                    }
+                    $total_messages = $count_query->count();
+                } catch (\Exception $e) {
+                    $this->logError('Folder: '.$folder->name.'; Count error: '.$e->getMessage());
+                    if (!$no_charset) {
+                        // Charset issues (e.g. MS mailboxes): retry the count without charset.
+                        $no_charset = true;
+                    } else {
+                        // Still failing: fetch a single bunch so we never silently fetch nothing.
+                        // The per-bunch error handling below reports what goes wrong.
+                        $total_messages = $page_size;
+                        $this->folder_failed = true;
+                    }
                 }
-                if ($no_charset) {
-                    $count_query->setCharset(null);
-                }
-                $total_messages = $count_query->count();
-            } catch (\Exception $e) {
-                // If the SEARCH count fails (e.g. charset issues on some servers), fall
-                // back to a single bunch so we never silently fetch nothing. The
-                // per-bunch charset retry below still recovers the rest on such servers.
-                $total_messages = $page_size;
-                $this->logError('Folder: '.$folder->name.'; Count error: '.$e->getMessage());
             }
             $total_pages = ($page_size > 0) ? (int) ceil($total_messages / $page_size) : 1;
 
+            $prev_ids = [];
             for ($page = 1; $page <= $total_pages; $page++) {
                 // Get messages.
                 $last_error = '';
                 $messages = collect([]);
 
                 try {    
-                    $messages_query = $folder->query()->since(now()->subDays($this->option('days')))->leaveUnread();
+                    $messages_query = $folder->query()->since(now()->subDays($this->option('days')))->leaveUnread()->lazyParse();
                     if ($unseen) {
                         $messages_query->unseen();
                     }
                     if ($no_charset) {
                         $messages_query->setCharset(null);
                     }
-                    $messages_query->limit($page_size, $page);
+                    $messages_query->limit($page_size, $unseen ? 1 : $page);
 
                     $messages = $messages_query->get();
 
@@ -395,47 +428,141 @@ class FetchEmails extends Command
                     $errors_count = count($client->getErrors());
                     // Solution for MS mailboxes.
                     // https://github.com/freescout-helpdesk/freescout/issues/176
-                    $messages_query = $folder->query()->since(now()->subDays($this->option('days')))->leaveUnread()->setCharset(null);
-                    if ($unseen) {
-                        $messages_query->unseen();
-                    }
-                    $messages = $messages_query->get();
-
                     $no_charset = true;
-                    $last_error = $client->getLastError();
+                    $last_error = '';
+                    try {
+                        $messages_query = $folder->query()->since(now()->subDays($this->option('days')))->leaveUnread()->lazyParse()->setCharset(null);
+                        if ($unseen) {
+                            $messages_query->unseen();
+                        }
+                        $messages_query->limit($page_size, $unseen ? 1 : $page);
+                        $messages = $messages_query->get();
+
+                        $last_error = $client->getLastError();
+                    } catch (\Exception $e) {
+                        $last_error = $e->getMessage().'; File: '.$e->getFile().' ('.$e->getLine().')';
+                        $this->logError('Folder: '.$folder->name.'; Charset fallback error: '.$last_error);
+                        $this->folder_failed = true;
+                    }
                 }
 
                 if ($last_error && !\Str::startsWith($last_error, 'Mailbox is empty')) {
                     // Throw exception for INBOX only
-                    if ($folder->name == 'INBOX' && !$messages) {
+                    if ($folder->name == 'INBOX' && $messages->isEmpty()) {
                         throw new \Exception($last_error, 1);
                     } else {
                         $this->error('['.date('Y-m-d H:i:s').'] '.$last_error);
                         $this->logError('Folder: '.$folder->name.'; Error: '.$last_error);
+                        $this->folder_failed = true;
                     }
                 }
 
                 $this->line('['.date('Y-m-d H:i:s').'] Fetched: '.count($messages));
 
+                // Unseen set is exhausted (mails were marked \Seen on previous pages).
+                if ($unseen && !count($messages)) {
+                    break;
+                }
+
+                // Nothing was marked \Seen since the previous page: re-requesting page 1 would
+                // return the same mails again (poison mails), so stop instead of starving the mailbox.
+                if ($unseen) {
+                    $ids = array_keys($messages->all());
+                    if ($ids && $ids === $prev_ids) {
+                        $this->logError('Folder: '.$folder->name.'; Stopped: '.count($ids).' unseen mails could not be processed');
+                        $this->folder_failed = true;
+                        break;
+                    }
+                    $prev_ids = $ids;
+                }
+
                 $message_index = 1;
 
                 // We have to sort messages manually, as they can be in non-chronological order
                 $messages = $this->sortMessage($messages);
-                foreach ($messages as $message_id => $message) {
-                    $this->line('['.date('Y-m-d H:i:s').'] '.$message_index.') '.$message->getSubject());
-                    $message_index++;
+                try {
+                    // Release each message (body, attachments) right after processing,
+                    // otherwise the whole bunch stays in memory until the end of it.
+                    $pending = $messages->all();
+                    unset($messages);
+                    foreach (array_keys($pending) as $pending_key) {
+                        $message = $pending[$pending_key];
+                        unset($pending[$pending_key]);
+                        // The collection key is unique per UID, the Message-ID may repeat within a bunch.
+                        $message_id = $message->tmp_message_key ?? $pending_key;
 
-                    $dest_mailbox = \Eventy::filter('fetch_emails.mailbox_to_save_message', $mailbox, $folder);
-                    $this->processMessage($message, $message_id, $dest_mailbox, $this->mailboxes);
+                        // Bodies are parsed one by one (Query::lazyParse), so only one parsed mail is in memory.
+                        try {
+                            $message->parseRawBody($message->tmp_raw_body);
+                            $message->tmp_raw_body = null;
+                        } catch (\Exception $e) {
+                            \Helper::logException($e);
+                            // Mark as read not to fetch the unparsable message again.
+                            try {
+                                $message->markAsRead();
+                            } catch (\Exception $e) {
+                                // Do nothing.
+                            }
+                            continue;
+                        }
+
+                        $this->line('['.date('Y-m-d H:i:s').'] '.$message_index.') '.$message->getSubject());
+                        $message_index++;
+
+                        $dest_mailbox = \Eventy::filter('fetch_emails.mailbox_to_save_message', $mailbox, $folder);
+                        $this->processMessage($message, $message_id, $dest_mailbox, $this->mailboxes);
+                    }
+                } finally {
+                    $this->flushFolderCounters();
+                }
+
+                // Message objects hold reference cycles, free them per bunch to stay under memory_limit.
+                unset($pending, $message);
+                gc_collect_cycles();
+            }
+        }
+    }
+
+    public function flushFolderCounters()
+    {
+        $ids = array_keys($this->dirty_mailbox_ids);
+        $this->dirty_mailbox_ids = [];
+        foreach (Mailbox::whereIn('id', $ids)->get() as $mailbox) {
+            $mailbox->updateFoldersCounters();
+        }
+    }
+
+    // Other active mailboxes addressed in To/Cc/Bcc of the message: they get their own copy.
+    public function getExtraMailboxes($message, $mailbox, $mailboxes)
+    {
+        $extra_mailboxes = [];
+        $recipient_emails = array_unique($this->formatEmailList(array_merge(
+            $this->attrToArray($message->getTo()), 
+            $this->attrToArray($message->getCc()), 
+            // It will always return an empty value as it's Bcc.
+            $this->attrToArray($message->getBcc())
+        )));
+
+        if (count($mailboxes) && count($recipient_emails) > 1) {
+            foreach ($mailboxes as $check_mailbox) {
+                if ($check_mailbox->id == $mailbox->id || !$check_mailbox->isInActive()) {
+                    continue;
+                }
+                // No need to check mailbox aliases.
+                if (in_array(\App\Email::sanitizeEmail($check_mailbox->email), $recipient_emails)) {
+                    $extra_mailboxes[] = $check_mailbox;
                 }
             }
         }
 
-        $client->disconnect();
+        return $extra_mailboxes;
     }
 
-    public function processMessage($message, $message_id, $mailbox, $mailboxes, $extra = false)
+    public function processMessage($message, $message_id, $mailbox, $mailboxes, $extra = false, $attempt = 1)
     {
+        // $extra may be switched on below for a mail that is this mailbox's own IMAP mail: only a call made for a sibling copy ($copy) leaves the mail unseen.
+        $copy = $extra;
+
         try {
 
             // From - $from is the plain text email.
@@ -505,18 +632,9 @@ class FetchEmails extends Command
             // Mailbox has been mentioned in Bcc or email originates from within FreeScout.
             if (!$extra && $duplicate_message_id) {
 
-                $recipients = array_merge(
-                    $this->formatEmailList($message->getTo()),
-                    $this->formatEmailList($message->getCc())
-                );
-
-                // $is_outbound_from_fs is needed to fetch messages sent from one FreeScout mailbox to another.
-                // https://github.com/freescout-help-desk/freescout/issues/5368#issuecomment-4309140388
-                $is_outbound_from_fs = \MailHelper::isFsMessageId($duplicate_message_id->message_id);
-
-                if ((!in_array(Email::sanitizeEmail($mailbox->email), $recipients) || $is_outbound_from_fs)
-                    // Make sure that previous email has been imported into other mailbox.
-                    && $duplicate_message_id->conversation
+                // A recipient mailbox whose duplicate lives in another mailbox imports its own copy too:
+                // the artificial Message-ID below makes this idempotent if the original's fan-out already created it.
+                if ($duplicate_message_id->conversation
                     && $duplicate_message_id->conversation->mailbox_id != $mailbox->id
                 ) {
                     $extra = true;
@@ -549,7 +667,24 @@ class FetchEmails extends Command
             // Check if message already fetched.
             if ($duplicate_message_id) {
                 $this->line('['.date('Y-m-d H:i:s').'] Message with such Message-ID has been fetched before: '.$message_id);
-                $this->setSeen($message, $mailbox);
+
+                // The original import may have been interrupted or a copy may have failed before the mail was marked as Seen:
+                // retry the copies for other mailboxes (idempotent thanks to the artificial Message-ID).
+                $all_copies_done = true;
+                if (!$extra && !$new_email_with_same_message_id && $duplicate_message_id->type == Thread::TYPE_CUSTOMER
+                    && $duplicate_message_id->conversation
+                    && $duplicate_message_id->conversation->mailbox_id == $mailbox->id
+                ) {
+                    foreach ($this->getExtraMailboxes($message, $mailbox, $mailboxes) as $extra_mailbox) {
+                        if ($this->processMessage($message, $message_id, $extra_mailbox, [], true) === false) {
+                            $all_copies_done = false;
+                        }
+                    }
+                }
+                // An extra copy never marks the mail Seen: only the outermost call does, after all copies are done.
+                if ($all_copies_done && !$copy) {
+                    $this->setSeen($message, $mailbox);
+                }
                 return;
             }
 
@@ -792,7 +927,9 @@ class FetchEmails extends Command
                         }
 
                         // Reply from user to his reply to the notification
+                        // The lookup by message_id has already been done above if there was no $prev_thread_id.
                         if (!$prev_thread
+                            && $prev_thread_id
                             && ($prev_thread = Thread::where('message_id', $prev_message_id)->first())
                             && $prev_thread->created_by_user_id
                             && $prev_thread->created_by_user->hasEmail($from)
@@ -946,7 +1083,8 @@ class FetchEmails extends Command
             } else {
                 $is_html = false;
                 $body = $message->getTextBody() ?? '';
-                $body = htmlspecialchars($body);
+                // Invalid UTF-8 (mislabelled 8-bit text) would make htmlspecialchars() return ''.
+                $body = htmlspecialchars(\Helper::utf8Encode($body), ENT_COMPAT | ENT_SUBSTITUTE, 'UTF-8');
             }
             $body = \Helper::utf8Encode($body);
 
@@ -1023,7 +1161,7 @@ class FetchEmails extends Command
                 // It will always return an empty value as it's Bcc.
                 $this->attrToArray($message->getBcc())
             );
-            $this->createCustomers($emails, $mailbox->getEmails());
+            $this->message_customers = $this->createCustomers($emails, $mailbox->getEmails());
 
             $date = $this->attrToDate($message->getDate());
 
@@ -1057,6 +1195,7 @@ class FetchEmails extends Command
             ]);
 
             $new_thread = null;
+            $extra_mailboxes = [];
             if ($message_from_customer) {
                 // SAVE CUSTOMER MESSAGE.
 
@@ -1066,39 +1205,15 @@ class FetchEmails extends Command
                 
                 // Maybe this email need to be imported also into other mailbox.
 
-                $recipient_emails = array_unique($this->formatEmailList(array_merge(
-                    $this->attrToArray($message->getTo()), 
-                    $this->attrToArray($message->getCc()), 
-                    // It will always return an empty value as it's Bcc.
-                    $this->attrToArray($message->getBcc())
-                )));
-                
-                if (count($mailboxes) && count($recipient_emails) > 1) {
-                    foreach ($mailboxes as $check_mailbox) {
-                        if ($check_mailbox->id == $mailbox->id) {
-                            continue;
-                        }
-                        if (!$check_mailbox->isInActive()) {
-                            continue;
-                        }
-                        foreach ($recipient_emails as $recipient_email) {
-                            // No need to check mailbox aliases.
-                            if (\App\Email::sanitizeEmail($check_mailbox->email) == $recipient_email) {
-                                $this->extra_import[] = [
-                                    'mailbox'    => $check_mailbox,
-                                    'message'    => $message,
-                                    'message_id' => $message_id,
-                                ];
-                                break;
-                            }
-                        }
-                    }
+                // An extra import never fans out further, the original import does it.
+                if (!$extra) {
+                    $extra_mailboxes = $this->getExtraMailboxes($message, $mailbox, $mailboxes);
                 }
                 //}
 
                 if (\Eventy::filter('fetch_emails.should_save_thread', true, $data) !== false) {
                     // SendAutoReply listener will check bounce flag and will not send an auto reply if this is an auto responder.
-                    $new_thread = $this->saveCustomerThread($mailbox, $data['message_id'], $data['prev_thread'], $data['from'], $data['to'], $data['cc'], $data['bcc'], $data['subject'], $data['body'], $data['attachments'], $data['message']->getHeader(), $data['date']);
+                    $new_thread = $this->saveCustomerThread($mailbox, $data['message_id'], $data['prev_thread'], $data['from'], $data['to'], $data['cc'], $data['bcc'], $data['subject'], $data['body'], $data['attachments'], $data['message']->getHeader(), $data['date'], $this->message_customers);
                 } else {
                     $this->line('['.date('Y-m-d H:i:s').'] Hook fetch_emails.should_save_thread returned false. Skipping message.');
                     $this->setSeen($message, $mailbox);
@@ -1146,7 +1261,22 @@ class FetchEmails extends Command
             }
 
             if ($new_thread) {
-                $this->setSeen($message, $mailbox);
+                // Import copies for other mailboxes before the message is marked as Seen,
+                // so that an interrupted run retries them instead of losing them.
+                // A copy that failed transiently (false) keeps the mail unseen, the next run imports only the missing copy.
+                $all_copies_done = true;
+                foreach ($extra_mailboxes as $extra_mailbox) {
+                    if ($this->processMessage($message, $message_id, $extra_mailbox, [], true) === false) {
+                        $all_copies_done = false;
+                    }
+                }
+
+                if (!$all_copies_done) {
+                    $this->logError('Copy for another mailbox failed, message kept unseen to retry on the next run');
+                } elseif (!$copy) {
+                    // An extra copy leaves the mail unseen: the outermost call marks it after all copies are done.
+                    $this->setSeen($message, $mailbox);
+                }
                 $this->line('['.date('Y-m-d H:i:s').'] Thread successfully created: '.$new_thread->id);
 
                 // If it was a bounce message, save bounce data.
@@ -1157,8 +1287,39 @@ class FetchEmails extends Command
                 $this->logError('Error occurred processing message');
             }
         } catch (\Exception $e) {
-            $this->setSeen($message, $mailbox);
+            // Only transient DB errors (deadlock, lock wait timeout, lost connection) leave the mail unseen
+            // to be retried on the next run. Everything else is deterministic (too long value, bad charset,
+            // duplicate entry...) and retrying it forever would let one mail block the mailbox.
+            // A deadlock rolled the import back: retry in place (keeps the mail in order, a reply must not
+            // be imported before its parent), only then fall back to the next run.
+            if ($e instanceof \Illuminate\Database\QueryException && $attempt < 3
+                && ((int) ($e->errorInfo[1] ?? 0) === 1213 || ($e->errorInfo[0] ?? '') === '40001')
+            ) {
+                usleep(random_int(50, 250) * 1000);
+                return $this->processMessage($message, $message_id, $mailbox, $mailboxes, $copy, $attempt + 1);
+            }
+            $transient_db_error = $e instanceof \App\AttachmentWriteException
+                || $e instanceof \Illuminate\Database\QueryException
+                && (in_array((int) ($e->errorInfo[1] ?? 0), [1040, 1205, 1203, 1213, 2002, 2003, 2006, 2013], true)
+                    || ($e->errorInfo[0] ?? '') === '40001'
+                    // Another mailbox imported the same Message-ID at the same moment (parallel fetch) and won the race:
+                    // keep the mail unseen, the next run finds its thread and imports this mailbox's own copy.
+                    // An extra import hitting its own artificial Message-ID already has its copy.
+                    // Only the threads.message_id key counts, other unique keys are deterministic.
+                    || (!$extra && (int) ($e->errorInfo[1] ?? 0) === 1062
+                        && strpos((string) ($e->errorInfo[2] ?? ''), 'threads_message_id_index') !== false));
+            if (!$transient_db_error && !$copy) {
+                // A flag failure must stay per-message: the original error is still logged below and the folder goes on.
+                try {
+                    $this->setSeen($message, $mailbox);
+                } catch (\Exception $flag_e) {
+                    $this->logError(\Helper::formatException($flag_e));
+                }
+            }
             $this->logError(\Helper::formatException($e));
+
+            // false = transient failure, the message stays unseen (processMessage() of an extra copy reports it to the caller).
+            return !$transient_db_error;
         }
     }
 
@@ -1269,7 +1430,7 @@ class FetchEmails extends Command
     /**
      * Save email from customer as thread.
      */
-    public function saveCustomerThread($mailbox, $message_id, $prev_thread, $from, $to, $cc, $bcc, $subject, $body, $attachments, $headers, $date)
+    public function saveCustomerThread($mailbox, $message_id, $prev_thread, $from, $to, $cc, $bcc, $subject, $body, $attachments, $headers, $date, $customers = [])
     {
         // Fetch date & time setting.
         $use_mail_date_on_fetching = config('app.use_mail_date_on_fetching');
@@ -1287,7 +1448,7 @@ class FetchEmails extends Command
         $prev_conv_cc = $conv_cc;
 
         // Customers are created before with email and name
-        $customer = Customer::create($from);
+        $customer = $customers[\App\Email::sanitizeEmail($from)] ?? Customer::create($from);
         if ($prev_thread) {
             $conversation = $prev_thread->conversation;
 
@@ -1353,66 +1514,77 @@ class FetchEmails extends Command
         }
         // Set folder id
         $conversation->updateFolder();
-        $conversation->save();
-
-        // Thread
-        $thread = new Thread();
-        $thread->conversation_id = $conversation->id;
-        $thread->user_id = $conversation->user_id;
-        $thread->type = Thread::TYPE_CUSTOMER;
-        $thread->status = $conversation->status;
-        $thread->state = Thread::STATE_PUBLISHED;
-        $thread->message_id = $message_id;
-        $thread->headers = $this->headerToStr($headers);
-        $thread->body = $body;
-        $thread->from = $from;
-        $thread->setTo($to);
-        $thread->setCc($cc);
-        $thread->setBcc($bcc);
-        $thread->source_via = Thread::PERSON_CUSTOMER;
-        $thread->source_type = Thread::SOURCE_TYPE_EMAIL;
-        $thread->customer_id = $customer->id;
-        $thread->created_by_customer_id = $customer->id;
-        $thread->created_at = $now;
-        $thread->updated_at = $now;
-        if ($new) {
-            $thread->first = true;
-        }
+        // Conversation, thread and attachments are saved atomically: a kill or exception
+        // must not leave a thread without its attachments (the mail would be skipped as duplicate).
+        DB::beginTransaction();
         try {
-            $thread->save();
-        } catch (\Exception $e) {
-            // Could not save thread.
-            // https://github.com/freescout-helpdesk/freescout/issues/3186
+            $conversation->save();
+
+            // Thread
+            $thread = new Thread();
+            $thread->conversation_id = $conversation->id;
+            $thread->user_id = $conversation->user_id;
+            $thread->type = Thread::TYPE_CUSTOMER;
+            $thread->status = $conversation->status;
+            $thread->state = Thread::STATE_PUBLISHED;
+            $thread->message_id = $message_id;
+            $thread->headers = $this->headerToStr($headers);
+            $thread->body = $body;
+            $thread->from = $from;
+            $thread->setTo($to);
+            $thread->setCc($cc);
+            $thread->setBcc($bcc);
+            $thread->source_via = Thread::PERSON_CUSTOMER;
+            $thread->source_type = Thread::SOURCE_TYPE_EMAIL;
+            $thread->customer_id = $customer->id;
+            $thread->created_by_customer_id = $customer->id;
+            $thread->created_at = $now;
+            $thread->updated_at = $now;
             if ($new) {
-                $conversation->deleteForever();
+                $thread->first = true;
             }
-            throw $e;
-        }
+            try {
+                $thread->save();
+            } catch (\Exception $e) {
+                // Could not save thread.
+                // https://github.com/freescout-helpdesk/freescout/issues/3186
+                if ($new) {
+                    $conversation->deleteForever();
+                }
+                throw $e;
+            }
 
-        $body_changed = false;
-        $saved_attachments = $this->saveAttachments($attachments, $thread->id);
-        if ($saved_attachments) {
+            $body_changed = false;
+            $saved_attachments = $this->saveAttachments($attachments, $thread->id);
+            if ($saved_attachments) {
 
-            // After attachments saved to the disk we can replace cids in body (for PLAIN and HTML body)
-            $thread->body = $this->replaceCidsWithAttachmentUrls($thread->body, $saved_attachments, $conversation, $prev_has_attachments);
-            $body_changed = true;
+                // After attachments saved to the disk we can replace cids in body (for PLAIN and HTML body)
+                $thread->body = $this->replaceCidsWithAttachmentUrls($thread->body, $saved_attachments, $conversation, $prev_has_attachments);
+                $body_changed = true;
             
-            foreach ($saved_attachments as $saved_attachment) {
-                if (!$saved_attachment['attachment']->embedded) {
-                    $thread->has_attachments = true;
-                    break;
+                foreach ($saved_attachments as $saved_attachment) {
+                    if (!$saved_attachment['attachment']->embedded) {
+                        $thread->has_attachments = true;
+                        break;
+                    }
                 }
             }
-        }
 
-        $new_body = Thread::replaceBase64ImagesWithAttachments($thread->body);
-        if ($new_body != $thread->body) {
-            $thread->body = $new_body;
-            $body_changed = true;
-        }
+            $new_body = Thread::replaceBase64ImagesWithAttachments($thread->body, null, $thread->id);
+            if ($new_body != $thread->body) {
+                $thread->body = $new_body;
+                $body_changed = true;
+            }
 
-        if ($body_changed) {
-            $thread->save();
+            if ($body_changed) {
+                $thread->save();
+            }
+            DB::commit();
+            Conversation::releaseNumberLock();
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            Conversation::releaseNumberLock();
+            throw $e;
         }
 
         // Update conversation here if needed.
@@ -1425,7 +1597,7 @@ class FetchEmails extends Command
         $conversation->save();
 
         // Update folders counters
-        $conversation->mailbox->updateFoldersCounters();
+        $this->dirty_mailbox_ids[$conversation->mailbox_id] = true;
 
         if ($new) {
             event(new CustomerCreatedConversation($conversation, $thread));
@@ -1537,62 +1709,73 @@ class FetchEmails extends Command
         $conversation->user_updated_at = $now;
         // Set folder id
         $conversation->updateFolder();
-        $conversation->save();
+        // Conversation, thread and attachments are saved atomically: a kill or exception
+        // must not leave a thread without its attachments (the mail would be skipped as duplicate).
+        DB::beginTransaction();
+        try {
+            $conversation->save();
 
-        // Update folders counters
-        $conversation->mailbox->updateFoldersCounters();
+            // Update folders counters
+            $this->dirty_mailbox_ids[$conversation->mailbox_id] = true;
 
-        // Set CC for the thread to send user reply to CCed emails also.
-        if ($conv_cc) {
-            $cc = array_merge($cc, $conv_cc);
-        }
+            // Set CC for the thread to send user reply to CCed emails also.
+            if ($conv_cc) {
+                $cc = array_merge($cc, $conv_cc);
+            }
 
-        // Thread
-        $thread = new Thread();
-        $thread->conversation_id = $conversation->id;
-        $thread->user_id = $conversation->user_id;
-        $thread->type = Thread::TYPE_MESSAGE;
-        $thread->status = $conversation->status;
-        $thread->state = Thread::STATE_PUBLISHED;
-        $thread->message_id = $message_id;
-        $thread->headers = $this->headerToStr($headers);
-        $thread->body = $body;
-        $thread->from = $from;
-        // To must be customer's email
-        $thread->setTo([$conversation->customer_email]);
-        $thread->setCc($cc);
-        $thread->setBcc($bcc);
-        $thread->source_via = Thread::PERSON_USER;
-        $thread->source_type = Thread::SOURCE_TYPE_EMAIL;
-        $thread->customer_id = $conversation->customer_id;
-        $thread->created_by_user_id = $user_id;
-        $thread->created_at = $now;
-        $thread->updated_at = $now;
-        $thread->save();
+            // Thread
+            $thread = new Thread();
+            $thread->conversation_id = $conversation->id;
+            $thread->user_id = $conversation->user_id;
+            $thread->type = Thread::TYPE_MESSAGE;
+            $thread->status = $conversation->status;
+            $thread->state = Thread::STATE_PUBLISHED;
+            $thread->message_id = $message_id;
+            $thread->headers = $this->headerToStr($headers);
+            $thread->body = $body;
+            $thread->from = $from;
+            // To must be customer's email
+            $thread->setTo([$conversation->customer_email]);
+            $thread->setCc($cc);
+            $thread->setBcc($bcc);
+            $thread->source_via = Thread::PERSON_USER;
+            $thread->source_type = Thread::SOURCE_TYPE_EMAIL;
+            $thread->customer_id = $conversation->customer_id;
+            $thread->created_by_user_id = $user_id;
+            $thread->created_at = $now;
+            $thread->updated_at = $now;
+            $thread->save();
 
-        $body_changed = false;
-        $saved_attachments = $this->saveAttachments($attachments, $thread->id);
-        if ($saved_attachments) {
-            // After attachments saved to the disk we can replace cids in body (for PLAIN and HTML body)
-            $thread->body = $this->replaceCidsWithAttachmentUrls($thread->body, $saved_attachments, $conversation, $prev_has_attachments);
-            $body_changed = true;
+            $body_changed = false;
+            $saved_attachments = $this->saveAttachments($attachments, $thread->id);
+            if ($saved_attachments) {
+                // After attachments saved to the disk we can replace cids in body (for PLAIN and HTML body)
+                $thread->body = $this->replaceCidsWithAttachmentUrls($thread->body, $saved_attachments, $conversation, $prev_has_attachments);
+                $body_changed = true;
 
-            foreach ($saved_attachments as $saved_attachment) {
-                if (!$saved_attachment['attachment']->embedded) {
-                    $thread->has_attachments = true;
-                    break;
+                foreach ($saved_attachments as $saved_attachment) {
+                    if (!$saved_attachment['attachment']->embedded) {
+                        $thread->has_attachments = true;
+                        break;
+                    }
                 }
             }
-        }
 
-        $new_body = Thread::replaceBase64ImagesWithAttachments($thread->body);
-        if ($new_body != $thread->body) {
-            $thread->body = $new_body;
-            $body_changed = true;
-        }
+            $new_body = Thread::replaceBase64ImagesWithAttachments($thread->body, null, $thread->id);
+            if ($new_body != $thread->body) {
+                $thread->body = $new_body;
+                $body_changed = true;
+            }
 
-        if ($body_changed) {
-            $thread->save();
+            if ($body_changed) {
+                $thread->save();
+            }
+            DB::commit();
+            Conversation::releaseNumberLock();
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            Conversation::releaseNumberLock();
+            throw $e;
         }
 
         event(new UserReplied($conversation, $thread));
@@ -1952,11 +2135,13 @@ class FetchEmails extends Command
      */
     public function createCustomers($emails, $exclude_emails)
     {
+        // One entry per address within the message: first non-empty name wins, From goes first.
+        $items = [];
         foreach ($emails as $item) {
-            // Email belongs to mailbox
-            // if (in_array(Email::sanitizeEmail($item->mail), $exclude_emails)) {
-            //     continue;
-            // }
+            $email = \App\Email::sanitizeEmail($item->mail);
+            if (!$email) {
+                continue;
+            }
             $data = [];
             if (!empty($item->personal)) {
                 $name_parts = Customer::parseName($item->personal);
@@ -1967,8 +2152,19 @@ class FetchEmails extends Command
                     $data['last_name'] = $name_parts['last_name'];
                 }
             }
-            Customer::create($item->mail, $data);
+            if (!isset($items[$email])) {
+                $items[$email] = ['mail' => $item->mail, 'data' => $data];
+            } elseif (empty($items[$email]['data']) && $data) {
+                $items[$email]['data'] = $data;
+            }
         }
+
+        $customers = [];
+        foreach ($items as $email => $item) {
+            $customers[$email] = Customer::create($item['mail'], $item['data']);
+        }
+
+        return $customers;
     }
 
     public function setSeen($message, $mailbox)

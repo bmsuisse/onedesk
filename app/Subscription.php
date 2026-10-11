@@ -74,6 +74,11 @@ class Subscription extends Model
      */
     public static $occurred_events = [];
 
+    /**
+     * Subscription rows per mailbox users and events, only set while processEvents() runs.
+     */
+    protected static $subscriptions_memo = null;
+
     public $timestamps = false;
 
     /**
@@ -250,9 +255,18 @@ class Subscription extends Model
             $mailbox_user_ids = $conversation->mailbox->userIdsHavingAccess();
         }
 
-        $subscriptions = self::whereIn('user_id', $mailbox_user_ids)
-            ->whereIn('event', $events)
-            ->get();
+        // Raw rows memo, valid for one processEvents() call (null outside of it).
+        $memo_key = md5(implode(',', $mailbox_user_ids).'|'.implode(',', $events));
+        if (self::$subscriptions_memo !== null && isset(self::$subscriptions_memo[$memo_key])) {
+            $subscriptions = clone self::$subscriptions_memo[$memo_key];
+        } else {
+            $subscriptions = self::with('user')->whereIn('user_id', $mailbox_user_ids)
+                ->whereIn('event', $events)
+                ->get();
+            if (self::$subscriptions_memo !== null) {
+                self::$subscriptions_memo[$memo_key] = clone $subscriptions;
+            }
+        }
 
         $subscriptions = \Eventy::filter('subscription.subscriptions', $subscriptions, $conversation, $events, $thread);
 
@@ -314,6 +328,10 @@ class Subscription extends Model
     public static function processEvents()
     {
         $notify = [];
+        // Mailbox user ids memo, valid for this call only.
+        $ids_by_mailbox = [];
+        $threads_by_conversation = [];
+        self::$subscriptions_memo = [];
 
         $delay = now()->addSeconds(Conversation::UNDO_TIMOUT);
 
@@ -334,13 +352,21 @@ class Subscription extends Model
             if ($mailbox_user_ids === null) {
                 $mailbox_user_ids = $event['conversation']->mailbox->userIdsHavingAccess();
             }*/
-            $mailbox_user_ids = $event['conversation']->mailbox->userIdsHavingAccess();
+            $mailbox = $event['conversation']->mailbox;
+            if (!isset($ids_by_mailbox[$mailbox->id])) {
+                $ids_by_mailbox[$mailbox->id] = $mailbox->userIdsHavingAccess();
+            }
+            $mailbox_user_ids = $ids_by_mailbox[$mailbox->id];
 
             // When conversation is moved to another mailbox
             // notify only users NOT having access to the original mailbox.
             // https://github.com/freescout-help-desk/freescout/issues/5580
             if ($event['event_type'] == self::EVENT_TYPE_USER_MOVED && !empty($event['extra_data']['from_mailbox'])) {
-                $original_mailbox_user_ids = $event['extra_data']['from_mailbox']->userIdsHavingAccess();
+                $from_mailbox = $event['extra_data']['from_mailbox'];
+                if (!isset($ids_by_mailbox[$from_mailbox->id])) {
+                    $ids_by_mailbox[$from_mailbox->id] = $from_mailbox->userIdsHavingAccess();
+                }
+                $original_mailbox_user_ids = $ids_by_mailbox[$from_mailbox->id];
                 $mailbox_user_ids = array_diff($mailbox_user_ids, $original_mailbox_user_ids);
             }
 
@@ -349,7 +375,11 @@ class Subscription extends Model
             $threads = [];
             foreach (self::$mediums as $medium) {
                 if (empty($notify[$medium][$event['conversation']->id])) {
-                    $threads = $event['conversation']->getThreads();
+                    $conversation_id = $event['conversation']->id;
+                    if (!isset($threads_by_conversation[$conversation_id])) {
+                        $threads_by_conversation[$conversation_id] = $event['conversation']->getThreads();
+                    }
+                    $threads = $threads_by_conversation[$conversation_id];
                     break;
                 } else {
                     $users[$medium] = $notify[$medium][$event['conversation']->id]['users'];
@@ -458,6 +488,7 @@ class Subscription extends Model
         \Eventy::action('subscription.process_events', $notify);
 
         self::$occurred_events = [];
+        self::$subscriptions_memo = null;
     }
 
     /**

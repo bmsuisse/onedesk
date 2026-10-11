@@ -35,6 +35,8 @@ class SecureController extends Controller
         // Sort by name.
         $mailboxes = \Eventy::filter('dashboard.mailboxes', $mailboxes->sortBy('name'));
 
+        \App\Mailbox::preloadMainFolders($mailboxes);
+
         return view('secure/dashboard', ['mailboxes' => $mailboxes]);
     }
 

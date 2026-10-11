@@ -116,7 +116,8 @@ class Structure {
             //return $this->detectParts($boundary, $body, $part_number);
             $parts = $this->detectParts($boundary, $body, $part_number);
 
-            if (count($parts) > 1) {
+            // A nested multipart with a single child must be expanded too, not stored as one opaque part.
+            if (count($parts) > 0) {
                 return $parts;
             }
         }
@@ -139,16 +140,33 @@ class Structure {
         //foreach($base_parts as $ctx) {
         
         // https://github.com/Webklex/php-imap/commit/0a9b263eb4e29c2822cf7d68bec27a9af33ced2f
+        $dashes = 2;
         if (strlen($boundary) == 1 && strstr($context, '--'.$boundary)) {
             $boundary = '--'.$boundary;
+            $dashes = 0;
         }
 
         $boundary_len = strlen($boundary);
         $last_pos = 0;
         $positions = [];
+        // RFC 2046: a delimiter is "--boundary" at the start of a line. A bare strpos() also hits the boundary text
+        // inside base64/body data (e.g. "MIX") and cuts attachments off.
         while (($last_pos = strpos($context, $boundary, $last_pos)) !== false) {
-            $positions[] = $last_pos;
+            $line_start = $last_pos - $dashes;
+            if ($line_start == 0 || ($line_start > 0 && $context[$line_start-1] == "\n"
+                && ($dashes == 0 || substr($context, $line_start, 2) === '--'))
+            ) {
+                $positions[] = $last_pos;
+            }
             $last_pos = $last_pos + $boundary_len;
+        }
+        if (!count($positions)) {
+            // ponytail: odd layout (e.g. no line break before the boundary): fall back to the old bare search.
+            $last_pos = 0;
+            while (($last_pos = strpos($context, $boundary, $last_pos)) !== false) {
+                $positions[] = $last_pos;
+                $last_pos = $last_pos + $boundary_len;
+            }
         }
         if (!count($positions) || $positions[0] != 0) {
             array_unshift($positions, 0);
@@ -195,7 +213,12 @@ class Structure {
     public function find_parts(): array {
         if($this->type === IMAP::MESSAGE_TYPE_MULTIPART) {
             if (($boundary = $this->header->getBoundary()) === null)  {
-                throw new MessageContentFetchingException("no content found", 0);
+                // Multipart without boundary: import the raw body as one part instead of dropping the mail.
+                $part = new Part($this->raw, $this->header);
+                $part->subtype = 'plain';
+                $part->content_type = 'text/plain';
+
+                return [$part];
             }
 
             return $this->detectParts($boundary, $this->raw);

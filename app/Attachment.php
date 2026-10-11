@@ -80,6 +80,9 @@ class Attachment extends Model
         // Add underscore to the extension if file has restricted extension.
         $file_name = \Helper::sanitizeUploadedFileName($file_name, $uploaded_file, $content, $mime_type, $upload_mode);
 
+        // Control characters (NUL, newlines...) make the disk write fail on every run: the mail would be retried forever.
+        $file_name = preg_replace('/[\x00-\x1F\x7F]/', '', $file_name);
+
         // Replace some symbols in file name.
         // Gmail can not load image if it contains spaces.
         $file_name = preg_replace('/[ #\/]/', '_', $file_name);
@@ -148,26 +151,32 @@ class Attachment extends Model
     public static function saveFileToDisk($attachment, $file_name, $content, $uploaded_file)
     {
         // Save file from content or copy file.
-        // We have to keep file name as is, so if file exists we create extra folder.
-        // Examples: 1/2/3
-        $file_dir = self::generatePath($attachment->id);
+        // We have to keep file name as is, so every attachment gets its own folder (the id is unique,
+        // an exists() check followed by put() is not atomic for parallel fetchers). Examples: 1/2/3
+        $file_dir = self::generatePath($attachment->id).$attachment->id.DIRECTORY_SEPARATOR;
+        $file_path = self::DIRECTORY.DIRECTORY_SEPARATOR.$file_dir.$file_name;
 
-        $i = 0;
-        do {
-            $i++;
-            $file_path = self::DIRECTORY.DIRECTORY_SEPARATOR.$file_dir.$i.DIRECTORY_SEPARATOR.$file_name;
-        } while (self::getDisk()->exists($file_path));
-
-        $file_dir .= $i.DIRECTORY_SEPARATOR;
-
-        try {
-            if ($uploaded_file) {
-                $uploaded_file->storeAs(self::DIRECTORY.DIRECTORY_SEPARATOR.$file_dir, $file_name, self::getDiskName());
-            } else {
-                self::getDisk()->put($file_path, $content);
+        // Flysystem creates the shared parent folders (1/2) without tolerating a parallel fetcher creating them at the same moment
+        // ("Impossible to create the root directory"): the second try finds the folder.
+        for ($try = 1; ; $try++) {
+            try {
+                if ($uploaded_file) {
+                    $stored = $uploaded_file->storeAs(self::DIRECTORY.DIRECTORY_SEPARATOR.$file_dir, $file_name, self::getDiskName());
+                } else {
+                    $stored = self::getDisk()->put($file_path, $content);
+                }
+                if ($stored === false) {
+                    throw new \RuntimeException('Could not write '.$file_path);
+                }
+                break;
+            } catch (\Exception $e) {
+                if ($try < 3) {
+                    usleep(random_int(10, 50) * 1000);
+                    continue;
+                }
+                \Helper::logException($e, '[Attachment::saveFileToDisk()]');
+                throw new AttachmentWriteException($e->getMessage(), 0, $e);
             }
-        } catch (\Exception $e) {
-            \Helper::logException($e, '[Attachment::saveFileToDisk()]');
         }
 
         // $content may be a stream resource rather than a string; the SVG sanitizer needs

@@ -37,3 +37,4 @@ Thumbs.db
 .phpunit.result.cache
 /.phpunit.cache
 .env.testing
+tests/e2e/.work/

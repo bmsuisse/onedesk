@@ -12,11 +12,13 @@
     "repositories": [
         {
             "type": "vcs",
-            "url": "https://github.com/freescout-help-desk/laravel-selfupdater"
+            "url": "https://github.com/freescout-help-desk/laravel-selfupdater",
+            "no-api": true
         },
         {
             "type": "vcs",
-            "url": "https://github.com/freescout-help-desk/Purifier"
+            "url": "https://github.com/freescout-help-desk/Purifier",
+            "no-api": true
         }
     ],
     "require": {

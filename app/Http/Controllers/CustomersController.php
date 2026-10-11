@@ -246,6 +246,7 @@ class CustomersController extends Controller
         $query = $customer->conversations()
             ->where('customer_id', $customer->id)
             ->whereIn('mailbox_id', auth()->user()->mailboxesIdsCanView())
+            ->with('user') // The list shows the assignee; the customer column is hidden here.
             ->orderBy('created_at', 'desc');
 
         $user = auth()->user();

@@ -164,6 +164,9 @@ class Message {
 
     public $tmp_raw_body;
 
+    /** Collection key (Message-ID) set by Query::populate() before it is made unique per UID. */
+    public $tmp_message_key;
+
     /**
      * A list of all available and supported flags
      *
@@ -592,11 +595,8 @@ class Message {
      * @throws Exceptions\RuntimeException
      */
     public function peek(){
-        if ($this->fetch_options == IMAP::FT_PEEK) {
-            if ($this->getFlags()->get("seen") == null) {
-                $this->unsetFlag("Seen");
-            }
-        }elseif ($this->getFlags()->get("seen") != null) {
+        // Bodies are fetched with BODY.PEEK[TEXT], so FT_PEEK has no \Seen flag to reset.
+        if ($this->fetch_options != IMAP::FT_PEEK && $this->getFlags()->get("seen") != null) {
             $this->setFlag("Seen");
         }
     }
@@ -1144,6 +1144,29 @@ class Message {
     }
 
     /**
+     * Update local flags after a successful STORE instead of re-fetching them (saves an IMAP round trip).
+     * Falls back to a FETCH FLAGS if the store failed or the flags are not loaded.
+     *
+     * @param string $flag e.g. "\\Seen" (several separated by " ")
+     * @param bool   $add
+     * @param mixed  $status
+     */
+    private function applyStoredFlag($flag, bool $add, $status) {
+        if (!$status || !$this->flags instanceof FlagCollection) {
+            $this->parseFlags();
+            return;
+        }
+        foreach (preg_split('/\s+/', trim($flag)) as $f) {
+            $f = ltrim($f, "\\");
+            if ($add) {
+                $this->flags->put(strtolower($f), $f);
+            } else {
+                $this->flags->forget(strtolower($f));
+            }
+        }
+    }
+
+    /**
      * Set a given flag
      * @param string|array $flag
      *
@@ -1162,7 +1185,7 @@ class Message {
         } catch (Exceptions\RuntimeException $e) {
             throw new MessageFlagException("flag could not be set", 0, $e);
         }
-        $this->parseFlags();
+        $this->applyStoredFlag($flag, true, $status);
 
         $event = $this->getEvent("flag", "new");
         $event::dispatch($this, $flag);
@@ -1190,7 +1213,7 @@ class Message {
         } catch (Exceptions\RuntimeException $e) {
             throw new MessageFlagException("flag could not be removed", 0, $e);
         }
-        $this->parseFlags();
+        $this->applyStoredFlag($flag, false, $status);
 
         $event = $this->getEvent("flag", "deleted");
         $event::dispatch($this, $flag);

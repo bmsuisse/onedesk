@@ -3013,7 +3013,7 @@ class ConversationsController extends Controller
             }
 
             if (!count($conversations)) {
-                $conversations = $this->searchQuery($user, $q, $filters);
+                $conversations = $this->searchQuery($user, $q, $filters, $mode);
             }
         }
 
@@ -3091,7 +3091,7 @@ class ConversationsController extends Controller
     /**
      * Search conversations.
      */
-    public function searchQuery($user, $q, $filters)
+    public function searchQuery($user, $q, $filters, $mode = Conversation::SEARCH_MODE_CONV)
     {
         $conversations = \Eventy::filter('search.conversations.perform', '', $q, $filters, $user);
         if ($conversations !== '') {
@@ -3103,6 +3103,22 @@ class ConversationsController extends Controller
         }
 
         $query_conversations = Conversation::search($q, $filters, $user);
+
+        // Customers tab is active: only the total for the tab badge is needed,
+        // so skip loading the page of conversations.
+        // A numeric query may jump straight to the conversation, so load it then.
+        if ($mode != Conversation::SEARCH_MODE_CONV && !is_numeric(ltrim($q, '#'))) {
+            $page = \Illuminate\Pagination\Paginator::resolveCurrentPage();
+
+            return new \Illuminate\Pagination\LengthAwarePaginator(
+                [],
+                $query_conversations->toBase()->getCountForPagination(),
+                Conversation::DEFAULT_LIST_SIZE,
+                $page,
+                ['path' => \Illuminate\Pagination\Paginator::resolveCurrentPath()]
+            );
+        }
+
         return $query_conversations->paginate(Conversation::DEFAULT_LIST_SIZE);
     }
 

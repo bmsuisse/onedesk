@@ -22,6 +22,11 @@ class PolycastBroadcaster extends Broadcaster
      */
     private $delete_old = 2;
 
+    /**
+     * Timestamp of the last cleanup DELETE in this process.
+     */
+    private static $last_cleanup = null;
+
     public function __construct()
     {
         //$this->db = $app['db'];
@@ -35,8 +40,12 @@ class PolycastBroadcaster extends Broadcaster
      */
     public function broadcast(array $channels, $event, array $payload = [])
     {
-        // delete events older than two minutes
-        \DB::table('polycast_events')->where('created_at', '<', Carbon::now()->subMinutes($this->delete_old)->toDateTimeString())->delete();
+        // delete events older than two minutes, at most once per 30 seconds
+        // ponytail: per-process throttle; parallel workers may each delete once, which is harmless (idempotent).
+        if (self::$last_cleanup === null || time() - self::$last_cleanup >= 30) {
+            \DB::table('polycast_events')->where('created_at', '<', Carbon::now()->subMinutes($this->delete_old)->toDateTimeString())->delete();
+            self::$last_cleanup = time();
+        }
 
         // insert the new event
         \DB::table('polycast_events')->insert([

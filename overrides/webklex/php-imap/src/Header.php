@@ -641,6 +641,19 @@ class Header {
     }
 
     /**
+     * "addr@host (Comment)" (RFC 5322 comment instead of a display name, common in bounces) -> "Comment <addr@host>".
+     * ext-imap parses it itself; the regex fallback (no ext-imap/mailparse, e.g. PHP >= 8.4) does not.
+     */
+    private static function commentToDisplayName(string $address): string {
+        if (strpos($address, '<') === false
+            && preg_match('/^\s*([^\s()<>]+@[^\s()<>]+)\s*\((.*)\)\s*$/', $address, $m)
+        ) {
+            return trim($m[2]) !== '' ? trim($m[2]).' <'.$m[1].'>' : '<'.$m[1].'>';
+        }
+        return $address;
+    }
+
+    /**
      * Extract a given part as address array from a given header
      * @param $values
      *
@@ -672,6 +685,7 @@ class Header {
         foreach ($values as $address) {
             foreach (preg_split('/, ?(?=(?:[^"]*"[^"]*")*[^"]*$)/', $address) as $split_address) {
                 $split_address = trim(rtrim($split_address));
+                $split_address = self::commentToDisplayName($split_address);
 
                 if (strpos($split_address, ",") == strlen($split_address) - 1) {
                     $split_address = substr($split_address, 0, -1);

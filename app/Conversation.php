@@ -249,6 +249,8 @@ class Conversation extends Model
         parent::boot();
 
         self::creating(function (Conversation $model) {
+            // Serialize number allocation across parallel fetchers (max()+1 is racy); released in created.
+            \DB::selectOne('SELECT GET_LOCK(?, 10) AS l', ['conversation_number']);
             $next_ticket = (int) Option::get('next_ticket');
             $current_number = Conversation::max('number');
 
@@ -262,6 +264,18 @@ class Conversation extends Model
                 $model->number = $current_number + 1;
             }
         });
+
+        // Inside a transaction (fetch) the caller releases after commit/rollback, else others can't see the new number yet.
+        self::created(function () {
+            if (\DB::transactionLevel() == 0) {
+                self::releaseNumberLock();
+            }
+        });
+    }
+
+    public static function releaseNumberLock()
+    {
+        \DB::selectOne('SELECT RELEASE_LOCK(?) AS l', ['conversation_number']);
     }
 
     /**
