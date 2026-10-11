@@ -947,7 +947,7 @@ class Helper
             self::getPrivateStorage()->delete($storage_file_path);
         }
 
-        \Chumper\Zipper\Facades\Zipper::make($dest_path)->folder($folder)->add($files)->close();
+        (new \App\Misc\Zipper())->make($dest_path)->folder($folder)->add($files)->close();
 
         return $dest_path;
     }
@@ -1037,7 +1037,7 @@ class Helper
      */
     public static function unzip($archive, $to)
     {
-        \Chumper\Zipper\Facades\Zipper::make($archive)->extractTo($to);
+        (new \App\Misc\Zipper())->make($archive)->extractTo($to);
     }
 
     public static function logException($e, $prefix = '')
