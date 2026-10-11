@@ -3,6 +3,7 @@
 namespace App;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Artisan;
 
 class FailedJob extends Model
 {
@@ -19,7 +20,7 @@ class FailedJob extends Model
     		return $this->payload_decoded;
     	}
 
-    	$this->payload_decoded = json_decode($this->payload, true);
+    	$this->payload_decoded = json_decode((string) $this->payload, true);
 
     	return $this->payload_decoded;
     }
@@ -31,6 +32,6 @@ class FailedJob extends Model
 
     public static function retry($job_id)
     {
-        \Artisan::call('queue:retry', ['id' => $job_id]);
+        Artisan::call('queue:retry', ['id' => $job_id]);
     }
 }
