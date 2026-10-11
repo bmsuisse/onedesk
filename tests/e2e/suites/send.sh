@@ -3,7 +3,7 @@
 # AutoReply, UserNotification, Test. Raw MIME is captured, asserted semantically (mime_check.py) and compared with golden/mime/*.eml.  SEND_RECORD=1 rewrites the goldens.
 source "$(dirname "$0")/../lib.sh"
 SINK=$WORK/storage/sink
-sink_reset() { rm -rf $SINK; mkdir -p $SINK; chmod 777 $SINK; }
+sink_reset() { mkdir -p $SINK; chmod 777 $SINK; rm -rf $SINK/* $SINK/.[!.]* 2>/dev/null; true; }   # keep the bind-mounted dir itself: replacing it breaks the sink container mount
 docker rm -f odtest-smtp >/dev/null 2>&1
 docker run -d --name odtest-smtp --network odtest-net --memory 128m -v $HERE/docker/smtp_sink.py:/sink.py -v $SINK:/sink python:3.12-slim python -u /sink.py >/dev/null || { echo "cannot start sink"; exit 2; }
 until docker exec odtest-php php -r 'exit(@fsockopen("odtest-smtp", 2525) ? 0 : 1);' 2>/dev/null; do sleep 1; done
