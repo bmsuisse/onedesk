@@ -13,7 +13,7 @@
   - mails killed mid-import
   - failed extra-mailbox copies
   - same Message-ID twice in one bunch
-- **Runs on current PHP:** the e2e suite (fetching all cases + web smoke) is green on **PHP 8.5** as well as 7.4 (`PHPV=85 tests/e2e/run.sh up quick`). Fixed for PHP >= 8.4, which no longer ships ext-imap: sender addresses written as `addr@host (Comment)` (typical for bounces) were dropped.
+- **Runs on current PHP:** the e2e suite (fetching all cases + web smoke) is green on **PHP 8.5** as well as 7.4 (default e2e image; `PHPV=74 tests/e2e/run.sh up quick` runs 7.4). Fixed for PHP >= 8.4, which no longer ships ext-imap: sender addresses written as `addr@host (Comment)` (typical for bounces) were dropped.
 - **More robust parsing:** multipart without boundary, nested single-child multipart, boundary text inside bodies, invalid UTF-8 plain-text bodies, huge/cyclic garbage mails.
 - **Honest monitoring:** failed folder counts/pages no longer record the run as successful, so the fetch monitor can alert. Transient DB errors are retried instead of marking the mail Seen.
 - **Tests:** `tests/e2e/run.sh test` runs the real `freescout:fetch-emails` against Dovecot and MariaDB in Docker with generated, realistic mail (attachments, malformed MIME, fan-out, mailing lists, bounces, kills) and checks exact counts.

@@ -23,7 +23,7 @@ php_env() { docker exec -e APP_ENV=local -e APP_KEY="$(cat $WORK/appkey)" -e DB_
 sql() { docker exec odtest-db mariadb -ue2e -pe2e e2e -e "$1"; }
 load() { [ -f $STATE ] || { echo "run '$0 up' first"; exit 2; }; source $STATE; }
 
-PHPV=${PHPV:-74}; PHPIMG=onedesk-e2e-php; [ "$PHPV" = 74 ] || PHPIMG=onedesk-e2e-php$PHPV   # PHPV=85 -> PHP 8.5 image
+PHPV=${PHPV:-85}; PHPIMG=onedesk-e2e-php; [ "$PHPV" = 74 ] || PHPIMG=onedesk-e2e-php$PHPV   # default PHP 8.5; PHPV=74 -> PHP 7.4 image
 
 up() {
   case "${1:-quick}" in quick) N=10; M=100;; full) N=40; M=300;; huge) N=100; M=500;; *) echo "profile: quick|full|huge"; exit 2;; esac
