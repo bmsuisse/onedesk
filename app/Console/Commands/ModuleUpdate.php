@@ -72,7 +72,7 @@ class ModuleUpdate extends Command
                 if ($module->getAlias() != $dir_module['alias'] /*|| !$module->active()*/) {
                     continue;
                 }
-                if (!empty($dir_module['version']) && version_compare($dir_module['version'], $module->get('version'), '>')) {
+                if (!empty($dir_module['version']) && version_compare($dir_module['version'], (string) $module->get('version'), '>')) {
 
                     $update_result = \App\Module::updateModule($dir_module['alias']);
 
@@ -131,7 +131,7 @@ class ModuleUpdate extends Command
             }
 
             // If the latest version is greater than the current version
-            if (version_compare($latest_version, $current_version, '>')) {
+            if (version_compare($latest_version, (string) $current_version, '>')) {
                 // Update the module
                 $update_result = \App\Module::updateModule($module->getAlias());
 
