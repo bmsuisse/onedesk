@@ -631,11 +631,11 @@ class SendReplyToCustomer implements ShouldQueue
      * This method is called after attempts had finished.
      * At this stage method has access only to variables passed in constructor.
      *
-     * @param Exception $exception
+     * @param \Throwable $exception
      *
      * @return void
      */
-    public function failed(\Exception $e)
+    public function failed(\Throwable $e)
     {
         // failed() is called by unserializing the original queue payload.
         if (!$this->last_thread && $this->threads && count($this->threads)) {

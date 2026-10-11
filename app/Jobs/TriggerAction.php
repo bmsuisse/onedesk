@@ -36,7 +36,7 @@ class TriggerAction implements ShouldQueue
      */
     public function handle()
     {
-        $args = $this->params;
+        $args = $this->params ?? [];
         array_unshift($args, $this->action);
 
         call_user_func_array("\Eventy::action", $args);
