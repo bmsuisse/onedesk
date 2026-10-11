@@ -22,7 +22,7 @@ class Job extends Model
     		return $this->payload_decoded;
     	}
 
-    	$this->payload_decoded = json_decode($this->payload, true);
+    	$this->payload_decoded = json_decode((string) $this->payload, true);
 
     	return $this->payload_decoded;
     }

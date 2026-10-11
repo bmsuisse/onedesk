@@ -9,7 +9,7 @@ use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
-use Mail;
+use Illuminate\Support\Facades\Mail;
 
 class SendAutoReply implements ShouldQueue
 {
@@ -144,11 +144,11 @@ class SendAutoReply implements ShouldQueue
      * This method is called after attempts had finished.
      * At this stage method has access only to variables passed in constructor.
      *
-     * @param Exception $exception
+     * @param \Throwable $exception
      *
      * @return void
      */
-    public function failed(\Exception $e)
+    public function failed(\Throwable $e)
     {
         // Write to activity log
         activity()

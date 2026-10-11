@@ -4,6 +4,7 @@ namespace App\Http\Middleware;
 
 use App\User;
 use Closure;
+use Illuminate\Support\Facades\Auth;
 
 class TokenAuth
 {
@@ -42,7 +43,7 @@ class TokenAuth
             $hash = hash_hmac('sha256', $user_id.':'.$expiry, config('app.key').$user->password);
 
             if (hash_equals($hash, $token_hash)) {
-                \Auth::login($user);
+                Auth::login($user);
             }
         }
         return $next($request);

@@ -49,7 +49,7 @@ class TrustHosts
         list($current_host) = explode(':', request()->getHttpHost());
         $current_host = mb_strtolower($current_host);
 
-        $app_host = mb_strtolower(\Helper::getDomain());
+        $app_host = mb_strtolower((string) \Helper::getDomain());
 
         // Do not check during installation process.
         if ($app_host == 'example.com' && preg_match("#^install/#", $request->path())) {
@@ -61,7 +61,7 @@ class TrustHosts
         }
 
         // Check hosts from APP_TRUSTED_HOSTS.
-        $trusted_hosts = explode(',', config('app.trusted_hosts'));
+        $trusted_hosts = explode(',', (string) config('app.trusted_hosts'));
         foreach ($trusted_hosts as $host) {
             $host = mb_strtolower(trim($host));
             if ($host && $current_host == $host) {
