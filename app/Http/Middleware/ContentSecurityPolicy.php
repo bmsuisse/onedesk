@@ -5,6 +5,7 @@ namespace App\Http\Middleware;
 use Closure;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Redirect;
+use Illuminate\Support\Str;
 
 /**
  * On regular pages CSP is added via <meta> tag.
@@ -25,7 +26,7 @@ class ContentSecurityPolicy
     {
         $response = $next($request);
 
-        if (str_contains($request->path(), '/ajax-html/')) {
+        if (Str::contains($request->path(), '/ajax-html/')) {
             $response->header('Content-Security-Policy', \Helper::getCspValue());
         }
 

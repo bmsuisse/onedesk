@@ -10,8 +10,10 @@ use App\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Password;
+use Illuminate\Support\Facades\Response;
+use Illuminate\Support\Facades\Session;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Validation\Rule;
-use Validator;
 
 class UsersController extends Controller
 {
@@ -138,11 +140,11 @@ class UsersController extends Controller
                 $user->sendInvite(true);
             } catch (\Exception $e) {
                 // Admin is allowed to see exceptions
-                \Session::flash('flash_error_floating', $e->getMessage().' — '.__('Check mail settings in "Manage » Settings » Mail Settings"'));
+                Session::flash('flash_error_floating', $e->getMessage().' — '.__('Check mail settings in "Manage » Settings » Mail Settings"'));
             }
         }
 
-        \Session::flash('flash_success_floating', __('User created successfully'));
+        Session::flash('flash_success_floating', __('User created successfully'));
 
         return redirect()->route('users.profile', ['id' => $user->id]);
     }
@@ -311,7 +313,7 @@ class UsersController extends Controller
 
         $user->save();
 
-        \Session::flash('flash_success_floating', __('Profile saved successfully'));
+        Session::flash('flash_success_floating', __('Profile saved successfully'));
 
         return redirect()->route('users.profile', ['id' => $id]);
     }
@@ -377,7 +379,7 @@ class UsersController extends Controller
         $user->permissions = $permissions;
         $user->save();
 
-        \Session::flash('flash_success_floating', __('Permissions saved successfully'));
+        Session::flash('flash_success_floating', __('Permissions saved successfully'));
 
         return redirect()->route('users.permissions', ['id' => $id]);
     }
@@ -425,7 +427,7 @@ class UsersController extends Controller
 
         Subscription::saveFromArray($request->subscriptions, $user->id);
 
-        \Session::flash('flash_success_floating', __('Notifications saved successfully'));
+        Session::flash('flash_success_floating', __('Notifications saved successfully'));
 
         return redirect()->route('users.notifications', ['id' => $id]);
     }
@@ -575,7 +577,7 @@ class UsersController extends Controller
 
                     $user->deleteUser($auth_user, $request->assign_user);
 
-                    \Session::flash('flash_success_floating', __('User deleted').': '.htmlspecialchars($user->getFullName()));
+                    Session::flash('flash_success_floating', __('User deleted').': '.htmlspecialchars($user->getFullName()));
 
                     $response['status'] = 'success';
                 }
@@ -591,7 +593,7 @@ class UsersController extends Controller
             $response['msg'] = 'Unknown error occurred';
         }
 
-        return \Response::json($response);
+        return Response::json($response);
     }
 
     /**
@@ -649,7 +651,7 @@ class UsersController extends Controller
 
         $user->sendPasswordChanged();
 
-        \Session::flash('flash_success_floating', __('Password saved successfully!'));
+        Session::flash('flash_success_floating', __('Password saved successfully!'));
 
         return redirect()->route('users.profile', ['id' => $id]);
     }
