@@ -3,6 +3,7 @@
 namespace App\Mail;
 
 use Illuminate\Mail\Mailable;
+use Illuminate\Support\Facades\Config;
 
 class Test extends Mailable
 {
@@ -32,7 +33,7 @@ class Test extends Mailable
             return $swiftmessage;
         });
 
-        $message = $this->subject(__(':app_name Test Email', ['app_name' => \Config::get('app.name')]));
+        $message = $this->subject(__(':app_name Test Email', ['app_name' => Config::get('app.name')]));
         if ($this->mailbox) {
             $message->view('emails/user/test', ['mailbox' => $this->mailbox]);
         } else {
