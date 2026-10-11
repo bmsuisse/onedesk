@@ -1,7 +1,5 @@
 <?php
 
-declare(strict_types=1);
-
 namespace GuzzleHttp\Psr7;
 
 use Psr\Http\Message\StreamInterface;
@@ -9,179 +7,161 @@ use Psr\Http\Message\StreamInterface;
 /**
  * Provides a read only stream that pumps data from a PHP callable.
  *
- * When invoking the provided callable, the PumpStream will pass the suggested
- * number of bytes to read to the callable. The callable can choose to ignore
+ * When invoking the provided callable, the PumpStream will pass the amount of
+ * data requested to read to the callable. The callable can choose to ignore
  * this value and return fewer or more bytes than requested. Any extra data
- * returned by the callable is buffered internally until drained using the
- * read() function of the PumpStream. The callable MUST return a non-empty
- * string when data is available, or false or null when there is no more data
- * to read.
+ * returned by the provided callable is buffered internally until drained using
+ * the read() function of the PumpStream. The provided callable MUST return
+ * false when there is no more data to read.
  *
- * Userland callables that declare no parameters are tolerated by PHP, but
- * length-aware callables remain the recommended formal shape.
+ * @final
  */
-final class PumpStream implements StreamInterface
+class PumpStream implements StreamInterface
 {
-    use NonSerializableStreamTrait;
-
-    /** @var callable|null */
+    /** @var callable */
     private $source;
 
-    private ?int $size;
+    /** @var int */
+    private $size;
 
-    private int $tellPos = 0;
+    /** @var int */
+    private $tellPos = 0;
 
-    private array $metadata;
+    /** @var array */
+    private $metadata;
 
-    private BufferStream $buffer;
+    /** @var BufferStream */
+    private $buffer;
 
     /**
-     * @param (callable(): (string|false|null))|(callable(int): (string|false|null)) $source  Source of the stream data. The callable receives
-     *                                                                                        the suggested number of bytes to read, may ignore
-     *                                                                                        that value, and may return fewer or more bytes.
-     *                                                                                        Extra bytes are buffered. The callable MUST return
-     *                                                                                        a non-empty string when producing data, or false|null
-     *                                                                                        on error or EOF. Userland callables that declare no
-     *                                                                                        parameters are tolerated by PHP, but length-aware
-     *                                                                                        callables remain the recommended formal shape.
-     * @param array{size?: int, metadata?: array}                                    $options Stream options:
-     *                                                                                        - metadata: Hash of metadata to use with stream.
-     *                                                                                        - size: Size of the stream, if known.
+     * @param callable $source  Source of the stream data. The callable MAY
+     *                          accept an integer argument used to control the
+     *                          amount of data to return. The callable MUST
+     *                          return a string when called, or false on error
+     *                          or EOF.
+     * @param array    $options Stream options:
+     *                          - metadata: Hash of metadata to use with stream.
+     *                          - size: Size of the stream, if known.
      */
     public function __construct(callable $source, array $options = [])
     {
         $this->source = $source;
-        $this->size = Integers::assertOptionalNonNegativeSize($options['size'] ?? null, 'Stream size');
-        $this->metadata = $options['metadata'] ?? [];
+        $this->size = isset($options['size']) ? $options['size'] : null;
+        $this->metadata = isset($options['metadata']) ? $options['metadata'] : [];
         $this->buffer = new BufferStream();
     }
 
-    public function __unserialize(array $data): void
+    public function __toString()
     {
-        $this->source = null;
-        $this->size = null;
-        $this->tellPos = 0;
-        $this->metadata = [];
-        $this->buffer = new BufferStream();
-
-        throw new \LogicException(static::class.' should never be unserialized');
+        try {
+            return Utils::copyToString($this);
+        } catch (\Exception $e) {
+            return '';
+        }
     }
 
-    public function __toString(): string
-    {
-        return Utils::copyToString($this);
-    }
-
-    public function close(): void
+    public function close()
     {
         $this->detach();
     }
 
     public function detach()
     {
-        $this->tellPos = 0;
+        $this->tellPos = false;
         $this->source = null;
-        $this->buffer->close();
 
         return null;
     }
 
-    public function getSize(): ?int
+    public function getSize()
     {
         return $this->size;
     }
 
-    public function tell(): int
+    public function tell()
     {
         return $this->tellPos;
     }
 
-    public function eof(): bool
+    public function eof()
     {
-        return $this->source === null;
+        return !$this->source;
     }
 
-    public function isSeekable(): bool
+    public function isSeekable()
     {
         return false;
     }
 
-    public function rewind(): void
+    public function rewind()
     {
         $this->seek(0);
     }
 
-    public function seek(int $offset, int $whence = SEEK_SET): void
+    public function seek($offset, $whence = SEEK_SET)
     {
         throw new \RuntimeException('Cannot seek a PumpStream');
     }
 
-    public function isWritable(): bool
+    public function isWritable()
     {
         return false;
     }
 
-    public function write(string $string): int
+    public function write($string)
     {
         throw new \RuntimeException('Cannot write to a PumpStream');
     }
 
-    public function isReadable(): bool
+    public function isReadable()
     {
         return true;
     }
 
-    public function read(int $length): string
+    public function read($length)
     {
-        if ($length < 0) {
-            throw new \RuntimeException('Length parameter cannot be negative');
-        }
-
-        $bufferLength = $this->buffer->getSize() ?? 0;
-
-        if ($length > $bufferLength) {
-            $this->pump($length - $bufferLength);
-        }
-
         $data = $this->buffer->read($length);
-        $this->tellPos = Integers::add($this->tellPos, strlen($data));
+        $readLen = strlen($data);
+        $this->tellPos += $readLen;
+        $remaining = $length - $readLen;
+
+        if ($remaining) {
+            $this->pump($remaining);
+            $data .= $this->buffer->read($remaining);
+            $this->tellPos += strlen($data) - $readLen;
+        }
 
         return $data;
     }
 
-    public function getContents(): string
+    public function getContents()
     {
-        return Utils::copyToString($this);
+        $result = '';
+        while (!$this->eof()) {
+            $result .= $this->read(1000000);
+        }
+
+        return $result;
     }
 
-    /**
-     * @return mixed
-     */
-    public function getMetadata(?string $key = null)
+    public function getMetadata($key = null)
     {
-        if ($key === null) {
+        if (!$key) {
             return $this->metadata;
         }
 
-        return $this->metadata[$key] ?? null;
+        return isset($this->metadata[$key]) ? $this->metadata[$key] : null;
     }
 
-    private function pump(int $length): void
+    private function pump($length)
     {
-        if ($this->source !== null) {
+        if ($this->source) {
             do {
-                /** @var string|false|null $data */
-                $data = ($this->source)($length);
+                $data = call_user_func($this->source, $length);
                 if ($data === false || $data === null) {
                     $this->source = null;
-
                     return;
                 }
-
-                if ($data === '') {
-                    throw new \RuntimeException('PumpStream source returned an empty string');
-                }
-
                 $this->buffer->write($data);
                 $length -= strlen($data);
             } while ($length > 0);

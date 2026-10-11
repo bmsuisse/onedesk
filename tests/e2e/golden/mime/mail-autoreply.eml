@@ -1,0 +1,63 @@
+To: Bob Buyer <bob.buyer@example.com>
+Subject: We got your request: Rechnung Frage
+Message-ID: <<ID>@test.local>
+Date: <DATE>
+From: Support =?utf-8?Q?Z=C3=BCrich?= <mb1@test.local>
+MIME-Version: 1.0
+Content-Type: multipart/alternative;
+ boundary="<BOUNDARY0>"
+References: <>
+In-Reply-To: <>
+
+
+--<BOUNDARY0>
+Content-Type: text/plain; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+Hello Bob Buyer, this is an automatic reply.
+
+
+----------------------=
+-------------------------------------
+Support powered by FreeScout =
+=E2=80=94 Free open source help desk & shared mailbox
+
+
+--<BOUNDARY0>
+Content-Type: text/html; charset=utf-8
+Content-Transfer-Encoding: quoted-printable
+
+<html lang=3D"en" >
+<head>
+    <meta content=3D"text/html; charset=3Dut=
+f-8" http-equiv=3D"Content-Type">
+</head>
+<body bgcolor=3D"#ffffff">
+=
+    <div id=3D"fsReplyAbove" class=3D"fsReplyAbove">
+
+                 =
+   <div style=3D"font-family:sans-serif;">
+                    <p>Hello B=
+ob Buyer, this is an automatic reply.</p>
+        </div>
+
+           =
+                         <div style=3D"font-size:12px; line-height:18px; fo=
+nt-family:Arial,'Helvetica Neue',Helvetica,Tahoma,sans-serif; color: #aaaaa=
+a; border-top: 1px solid #eeeeee;margin: 10px 0 14px 0; padding-top: 10px;"=
+>
+                            Support powered by <a href=3D"https://frees=
+cout.net">FreeScout</a> =E2=80=94 Free open source help desk & shared mailb=
+ox
+            </div>
+            </div>
+    <span height=3D"0" style=
+=3D"font-size: 0px; height:0px; line-height: 0px; color:#ffffff;">{#FS:RlNf=
+YXV0b3JlcGx5LTUtMWY3OTVhN2NmNjBlNTdjYkB0ZXN0LmxvY2Fs#}</span>
+</body>
+<=
+/html>
+
+--<BOUNDARY0>--
+

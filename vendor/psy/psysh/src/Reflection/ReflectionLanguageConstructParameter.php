@@ -3,7 +3,7 @@
 /*
  * This file is part of Psy Shell.
  *
- * (c) 2012-2018 Justin Hileman
+ * (c) 2012-2026 Justin Hileman
  *
  * For the full copyright and license information, please view the LICENSE
  * file that was distributed with this source code.
@@ -18,23 +18,30 @@ namespace Psy\Reflection;
  */
 class ReflectionLanguageConstructParameter extends \ReflectionParameter
 {
+    /** @var string|array|object */
     private $function;
+    /** @var int|string */
     private $parameter;
-    private $opts;
+    private array $opts;
 
+    /**
+     * @param string|array|object $function
+     * @param int|string          $parameter
+     * @param array               $opts
+     */
     public function __construct($function, $parameter, array $opts)
     {
-        $this->function  = $function;
+        $this->function = $function;
         $this->parameter = $parameter;
-        $this->opts      = $opts;
+        $this->opts = $opts;
     }
 
     /**
      * No class here.
      */
-    public function getClass()
+    public function getClass(): ?\ReflectionClass
     {
-        return;
+        return null;
     }
 
     /**
@@ -42,21 +49,36 @@ class ReflectionLanguageConstructParameter extends \ReflectionParameter
      *
      * @return bool
      */
-    public function isArray()
+    public function isArray(): bool
     {
-        return \array_key_exists('isArray', $this->opts) && $this->opts['isArray'];
+        return !empty($this->opts['isArray']);
+    }
+
+    public function hasType(): bool
+    {
+        return false;
+    }
+
+    public function getType(): ?\ReflectionType
+    {
+        return null;
     }
 
     /**
      * Get param default value.
      *
+     * @todo remove \ReturnTypeWillChange attribute after dropping support for PHP 7.x (when we can use mixed type)
+     *
      * @return mixed
      */
+    #[\ReturnTypeWillChange]
     public function getDefaultValue()
     {
         if ($this->isDefaultValueAvailable()) {
             return $this->opts['defaultValue'];
         }
+
+        return null;
     }
 
     /**
@@ -64,7 +86,7 @@ class ReflectionLanguageConstructParameter extends \ReflectionParameter
      *
      * @return string
      */
-    public function getName()
+    public function getName(): string
     {
         return $this->parameter;
     }
@@ -74,9 +96,14 @@ class ReflectionLanguageConstructParameter extends \ReflectionParameter
      *
      * @return bool
      */
-    public function isOptional()
+    public function isOptional(): bool
     {
-        return \array_key_exists('isOptional', $this->opts) && $this->opts['isOptional'];
+        return !empty($this->opts['isOptional']);
+    }
+
+    public function isVariadic(): bool
+    {
+        return !empty($this->opts['isVariadic']);
     }
 
     /**
@@ -84,7 +111,7 @@ class ReflectionLanguageConstructParameter extends \ReflectionParameter
      *
      * @return bool
      */
-    public function isDefaultValueAvailable()
+    public function isDefaultValueAvailable(): bool
     {
         return \array_key_exists('defaultValue', $this->opts);
     }
@@ -96,8 +123,8 @@ class ReflectionLanguageConstructParameter extends \ReflectionParameter
      *
      * @return bool
      */
-    public function isPassedByReference()
+    public function isPassedByReference(): bool
     {
-        return \array_key_exists('isPassedByReference', $this->opts) && $this->opts['isPassedByReference'];
+        return !empty($this->opts['isPassedByReference']);
     }
 }

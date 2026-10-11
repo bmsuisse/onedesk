@@ -1,7 +1,5 @@
 <?php
 
-declare(strict_types=1);
-
 namespace GuzzleHttp\Psr7;
 
 use Psr\Http\Message\StreamInterface;
@@ -9,17 +7,18 @@ use Psr\Http\Message\StreamInterface;
 /**
  * Converts Guzzle streams into PHP stream resources.
  *
- * @see https://www.php.net/streamwrapper
+ * @final
  */
-final class StreamWrapper
+class StreamWrapper
 {
     /** @var resource */
     public $context;
 
-    private StreamInterface $stream;
+    /** @var StreamInterface */
+    private $stream;
 
     /** @var string r, r+, or w */
-    private string $mode;
+    private $mode;
 
     /**
      * Returns a resource representing the stream.
@@ -40,210 +39,127 @@ final class StreamWrapper
             $mode = 'w';
         } else {
             throw new \InvalidArgumentException('The stream must be readable, '
-                .'writable, or both.');
+                . 'writable, or both.');
         }
 
-        $resource = @fopen('guzzle://stream', $mode, false, self::createStreamContext($stream));
-
-        if ($resource === false) {
-            throw new \RuntimeException('Unable to create stream resource');
-        }
-
-        return $resource;
+        return fopen('guzzle://stream', $mode, null, self::createStreamContext($stream));
     }
 
     /**
      * Creates a stream context that can be used to open a stream as a php stream resource.
+     *
+     * @param StreamInterface $stream
      *
      * @return resource
      */
     public static function createStreamContext(StreamInterface $stream)
     {
         return stream_context_create([
-            'guzzle' => ['stream' => $stream],
+            'guzzle' => ['stream' => $stream]
         ]);
     }
 
     /**
      * Registers the stream wrapper if needed
      */
-    public static function register(): void
+    public static function register()
     {
         if (!in_array('guzzle', stream_get_wrappers())) {
             stream_wrapper_register('guzzle', __CLASS__);
         }
     }
 
-    public function stream_open(string $path, string $mode, int $options, ?string &$opened_path = null): bool
+    public function stream_open($path, $mode, $options, &$opened_path)
     {
         $options = stream_context_get_options($this->context);
-        $stream = $options['guzzle']['stream'] ?? null;
 
-        if (!$stream instanceof StreamInterface) {
+        if (!isset($options['guzzle']['stream'])) {
             return false;
         }
 
         $this->mode = $mode;
-        $this->stream = $stream;
+        $this->stream = $options['guzzle']['stream'];
 
         return true;
     }
 
-    /**
-     * @return string|false
-     */
-    public function stream_read(int $count)
+    public function stream_read($count)
     {
-        try {
-            return $this->stream->read($count);
-        } catch (\RuntimeException $e) {
-            return false;
-        }
+        return $this->stream->read($count);
     }
 
-    public function stream_write(string $data): int
+    public function stream_write($data)
     {
-        try {
-            return $this->stream->write($data);
-        } catch (\RuntimeException $e) {
-            return -1;
-        }
+        return (int) $this->stream->write($data);
     }
 
-    /**
-     * @return int|false
-     */
     public function stream_tell()
     {
-        try {
-            return $this->stream->tell();
-        } catch (\RuntimeException $e) {
-            return false;
-        }
+        return $this->stream->tell();
     }
 
-    public function stream_eof(): bool
+    public function stream_eof()
     {
-        try {
-            return $this->stream->eof();
-        } catch (\RuntimeException $e) {
-            return true;
-        }
+        return $this->stream->eof();
     }
 
-    public function stream_seek(int $offset, int $whence): bool
+    public function stream_seek($offset, $whence)
     {
-        try {
-            $this->stream->seek($offset, $whence);
-        } catch (\RuntimeException $e) {
-            return false;
-        }
+        $this->stream->seek($offset, $whence);
 
         return true;
     }
 
-    /**
-     * @return resource|false
-     */
-    public function stream_cast(int $cast_as)
+    public function stream_cast($cast_as)
     {
-        try {
-            $stream = clone $this->stream;
-            $resource = $stream->detach();
-        } catch (\RuntimeException $e) {
-            return false;
-        }
+        $stream = clone($this->stream);
 
-        return $resource ?? false;
+        return $stream->detach();
     }
 
-    /**
-     * @return array{
-     *   dev: int,
-     *   ino: int,
-     *   mode: int,
-     *   nlink: int,
-     *   uid: int,
-     *   gid: int,
-     *   rdev: int,
-     *   size: int,
-     *   atime: int,
-     *   mtime: int,
-     *   ctime: int,
-     *   blksize: int,
-     *   blocks: int
-     * }|false
-     */
     public function stream_stat()
     {
-        try {
-            $size = $this->stream->getSize();
-        } catch (\RuntimeException $e) {
-            return false;
-        }
-
-        if ($size === null) {
-            return false;
-        }
-
         static $modeMap = [
-            'r' => 33060,
+            'r'  => 33060,
             'rb' => 33060,
             'r+' => 33206,
-            'w' => 33188,
-            'wb' => 33188,
+            'w'  => 33188,
+            'wb' => 33188
         ];
 
         return [
-            'dev' => 0,
-            'ino' => 0,
-            'mode' => $modeMap[$this->mode] ?? 0,
-            'nlink' => 0,
-            'uid' => 0,
-            'gid' => 0,
-            'rdev' => 0,
-            'size' => $size,
-            'atime' => 0,
-            'mtime' => 0,
-            'ctime' => 0,
+            'dev'     => 0,
+            'ino'     => 0,
+            'mode'    => $modeMap[$this->mode],
+            'nlink'   => 0,
+            'uid'     => 0,
+            'gid'     => 0,
+            'rdev'    => 0,
+            'size'    => $this->stream->getSize() ?: 0,
+            'atime'   => 0,
+            'mtime'   => 0,
+            'ctime'   => 0,
             'blksize' => 0,
-            'blocks' => 0,
+            'blocks'  => 0
         ];
     }
 
-    /**
-     * @return array{
-     *   dev: int,
-     *   ino: int,
-     *   mode: int,
-     *   nlink: int,
-     *   uid: int,
-     *   gid: int,
-     *   rdev: int,
-     *   size: int,
-     *   atime: int,
-     *   mtime: int,
-     *   ctime: int,
-     *   blksize: int,
-     *   blocks: int
-     * }
-     */
-    public function url_stat(string $path, int $flags): array
+    public function url_stat($path, $flags)
     {
         return [
-            'dev' => 0,
-            'ino' => 0,
-            'mode' => 0,
-            'nlink' => 0,
-            'uid' => 0,
-            'gid' => 0,
-            'rdev' => 0,
-            'size' => 0,
-            'atime' => 0,
-            'mtime' => 0,
-            'ctime' => 0,
+            'dev'     => 0,
+            'ino'     => 0,
+            'mode'    => 0,
+            'nlink'   => 0,
+            'uid'     => 0,
+            'gid'     => 0,
+            'rdev'    => 0,
+            'size'    => 0,
+            'atime'   => 0,
+            'mtime'   => 0,
+            'ctime'   => 0,
             'blksize' => 0,
-            'blocks' => 0,
+            'blocks'  => 0
         ];
     }
 }

@@ -1,7 +1,4 @@
 <?php
-
-declare(strict_types=1);
-
 namespace GuzzleHttp;
 
 use Psr\Http\Message\RequestInterface;
@@ -14,17 +11,10 @@ use Psr\Http\Message\UriInterface;
  */
 final class TransferStats
 {
-    private RequestInterface $request;
-
-    private ?ResponseInterface $response;
-
-    private ?float $transferTime;
-
-    private array $handlerStats;
-
-    /**
-     * @var mixed|null
-     */
+    private $request;
+    private $response;
+    private $transferTime;
+    private $handlerStats;
     private $handlerErrorData;
 
     /**
@@ -36,10 +26,10 @@ final class TransferStats
      */
     public function __construct(
         RequestInterface $request,
-        ?ResponseInterface $response = null,
-        ?float $transferTime = null,
+        ResponseInterface $response = null,
+        $transferTime = null,
         $handlerErrorData = null,
-        array $handlerStats = []
+        $handlerStats = []
     ) {
         $this->request = $request;
         $this->response = $response;
@@ -48,23 +38,30 @@ final class TransferStats
         $this->handlerStats = $handlerStats;
     }
 
-    public function getRequest(): RequestInterface
+    /**
+     * @return RequestInterface
+     */
+    public function getRequest()
     {
         return $this->request;
     }
 
     /**
      * Returns the response that was received (if any).
+     *
+     * @return ResponseInterface|null
      */
-    public function getResponse(): ?ResponseInterface
+    public function getResponse()
     {
         return $this->response;
     }
 
     /**
      * Returns true if a response was received.
+     *
+     * @return bool
      */
-    public function hasResponse(): bool
+    public function hasResponse()
     {
         return $this->response !== null;
     }
@@ -85,8 +82,10 @@ final class TransferStats
 
     /**
      * Get the effective URI the request was sent to.
+     *
+     * @return UriInterface
      */
-    public function getEffectiveUri(): UriInterface
+    public function getEffectiveUri()
     {
         return $this->request->getUri();
     }
@@ -96,15 +95,17 @@ final class TransferStats
      *
      * @return float|null Time in seconds.
      */
-    public function getTransferTime(): ?float
+    public function getTransferTime()
     {
         return $this->transferTime;
     }
 
     /**
      * Gets an array of all of the handler specific transfer data.
+     *
+     * @return array
      */
-    public function getHandlerStats(): array
+    public function getHandlerStats()
     {
         return $this->handlerStats;
     }
@@ -116,8 +117,10 @@ final class TransferStats
      *
      * @return mixed|null
      */
-    public function getHandlerStat(string $stat)
+    public function getHandlerStat($stat)
     {
-        return $this->handlerStats[$stat] ?? null;
+        return isset($this->handlerStats[$stat])
+            ? $this->handlerStats[$stat]
+            : null;
     }
 }

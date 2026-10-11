@@ -14,11 +14,11 @@ class Builder extends \Illuminate\Database\Query\Builder
     protected $cacheKey;
 
     /**
-     * The number of minutes to cache the query.
+     * The number of seconds to cache the query.
      *
      * @var int
      */
-    protected $cacheMinutes;
+    protected $cacheSeconds;
 
     /**
      * The tags for the query cache.
@@ -42,14 +42,14 @@ class Builder extends \Illuminate\Database\Query\Builder
     protected $cachePrefix = 'rememberable';
 
     /**
-     * Execute the query as a "select" statement.
+     * Execute the get query statement.
      *
      * @param  array  $columns
      * @return array|static[]
      */
     public function get($columns = ['*'])
     {
-        if ( ! is_null($this->cacheMinutes)) {
+        if ( ! is_null($this->cacheSeconds)) {
             return $this->getCached($columns);
         }
 
@@ -57,7 +57,7 @@ class Builder extends \Illuminate\Database\Query\Builder
     }
 
     /**
-     * Execute the query as a cached "select" statement.
+     * Execute the cached get query statement.
      *
      * @param  array  $columns
      * @return array
@@ -71,32 +71,74 @@ class Builder extends \Illuminate\Database\Query\Builder
         // If the query is requested to be cached, we will cache it using a unique key
         // for this database connection and query statement, including the bindings
         // that are used on this query, providing great convenience when caching.
-        list($key, $minutes) = $this->getCacheInfo();
+        $key = $this->getCacheKey();
+
+        $seconds = $this->cacheSeconds;
 
         $cache = $this->getCache();
 
         $callback = $this->getCacheCallback($columns);
 
-        // If we've been given a DateTime instance or a "minutes" value that is
+        // If we've been given a DateTime instance or a "seconds" value that is
         // greater than zero then we'll pass it on to the remember method.
         // Otherwise we'll cache it indefinitely.
-        if ($minutes instanceof DateTime || $minutes > 0) {
-            return $cache->remember($key, $minutes, $callback);
+        if ($seconds instanceof DateTime || $seconds > 0) {
+            return $cache->remember($key, $seconds, $callback);
         }
 
         return $cache->rememberForever($key, $callback);
     }
 
     /**
+     * Execute the pluck query statement.
+     *
+     * @param  string  $column
+     * @param  mixed  $key
+     * @return array|static[]
+     */
+    public function pluck($column, $key = null)
+    {
+        if ( ! is_null($this->cacheSeconds)) {
+            return $this->pluckCached($column, $key);
+        }
+
+        return parent::pluck($column, $key);
+    }
+
+    /**
+     * Execute the cached pluck query statement.
+     *
+     * @param  string  $column
+     * @param  mixed  $key
+     * @return array
+     */
+    public function pluckCached($column, $key = null)
+    {
+        $cacheKey = $this->getCacheKey($column.$key);
+
+        $seconds = $this->cacheSeconds;
+
+        $cache = $this->getCache();
+
+        $callback = $this->pluckCacheCallback($column, $key);
+
+        if ($seconds instanceof DateTime || $seconds > 0) {
+            return $cache->remember($cacheKey, $seconds, $callback);
+        }
+
+        return $cache->rememberForever($cacheKey, $callback);
+    }
+
+    /**
      * Indicate that the query results should be cached.
      *
-     * @param  \DateTime|int  $minutes
+     * @param  \DateTime|int  $seconds
      * @param  string  $key
      * @return $this
      */
-    public function remember($minutes, $key = null)
+    public function remember($seconds, $key = null)
     {
-        list($this->cacheMinutes, $this->cacheKey) = [$minutes, $key];
+        list($this->cacheSeconds, $this->cacheKey) = [$seconds, $key];
 
         return $this;
     }
@@ -119,7 +161,7 @@ class Builder extends \Illuminate\Database\Query\Builder
      */
     public function dontRemember()
     {
-        $this->cacheMinutes = $this->cacheKey = $this->cacheTags = null;
+        $this->cacheSeconds = $this->cacheKey = $this->cacheTags = null;
 
         return $this;
     }
@@ -132,6 +174,19 @@ class Builder extends \Illuminate\Database\Query\Builder
     public function doNotRemember()
     {
         return $this->dontRemember();
+    }
+
+    /**
+     * Set the cache prefix.
+     *
+     * @param  string  $prefix
+     * @return $this
+     */
+    public function prefix($prefix)
+    {
+        $this->cachePrefix = $prefix;
+
+        return $this;
     }
 
     /**
@@ -183,35 +238,27 @@ class Builder extends \Illuminate\Database\Query\Builder
     }
 
     /**
-     * Get the cache key and cache minutes as an array.
-     *
-     * @return array
-     */
-    protected function getCacheInfo()
-    {
-        return [$this->getCacheKey(), $this->cacheMinutes];
-    }
-
-    /**
      * Get a unique cache key for the complete query.
      *
+     * @param  mixed  $appends
      * @return string
      */
-    public function getCacheKey()
+    public function getCacheKey($appends = null)
     {
-        return $this->cachePrefix.':'.($this->cacheKey ?: $this->generateCacheKey());
+        return $this->cachePrefix.':'.($this->cacheKey ?: $this->generateCacheKey($appends));
     }
 
     /**
      * Generate the unique cache key for the query.
      *
+     * @param  mixed  $appends
      * @return string
      */
-    public function generateCacheKey()
+    public function generateCacheKey($appends = null)
     {
         $name = $this->connection->getName();
 
-        return hash('sha256', $name.$this->toSql().serialize($this->getBindings()));
+        return hash('sha256', $name.$this->toSql().serialize($this->getBindings()).$appends);
     }
 
     /**
@@ -236,7 +283,7 @@ class Builder extends \Illuminate\Database\Query\Builder
     }
 
     /**
-     * Get the Closure callback used when caching queries.
+     * Get the callback for get queries.
      *
      * @param  array  $columns
      * @return \Closure
@@ -244,23 +291,25 @@ class Builder extends \Illuminate\Database\Query\Builder
     protected function getCacheCallback($columns)
     {
         return function () use ($columns) {
-            $this->cacheMinutes = null;
+            $this->cacheSeconds = null;
 
             return $this->get($columns);
         };
     }
 
     /**
-     * Set the cache prefix.
+     * Get the callback for pluck queries.
      *
-     * @param string $prefix
-     *
-     * @return $this
+     * @param  string  $column
+     * @param  mixed  $key
+     * @return \Closure
      */
-    public function prefix($prefix)
+    protected function pluckCacheCallback($column, $key = null)
     {
-        $this->cachePrefix = $prefix;
+        return function () use ($column, $key) {
+            $this->cacheSeconds = null;
 
-        return $this;
+            return $this->pluck($column, $key);
+        };
     }
 }

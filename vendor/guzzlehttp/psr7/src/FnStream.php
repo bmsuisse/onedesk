@@ -1,43 +1,37 @@
 <?php
 
-declare(strict_types=1);
-
 namespace GuzzleHttp\Psr7;
 
 use Psr\Http\Message\StreamInterface;
 
 /**
- * Compose stream implementations based on a hash of callables.
+ * Compose stream implementations based on a hash of functions.
  *
  * Allows for easy testing and extension of a provided stream without needing
  * to create a concrete class for a simple extension point.
+ *
+ * @final
  */
-#[\AllowDynamicProperties]
-final class FnStream implements StreamInterface
+class FnStream implements StreamInterface
 {
-    use NonSerializableStreamTrait;
+    /** @var array */
+    private $methods;
 
-    private const SLOTS = [
-        '__toString', 'close', 'detach', 'rewind',
+    /** @var array Methods that must be implemented in the given array */
+    private static $slots = ['__toString', 'close', 'detach', 'rewind',
         'getSize', 'tell', 'eof', 'isSeekable', 'seek', 'isWritable', 'write',
-        'isReadable', 'read', 'getContents', 'getMetadata',
-    ];
-
-    /** @var array<string, callable> */
-    private array $methods;
-
-    private bool $detached = false;
+        'isReadable', 'read', 'getContents', 'getMetadata'];
 
     /**
-     * @param array<string, callable> $methods Hash of method name to a callable.
+     * @param array $methods Hash of method name to a callable.
      */
     public function __construct(array $methods)
     {
         $this->methods = $methods;
 
-        // Create the callables on the class
+        // Create the functions on the class
         foreach ($methods as $name => $fn) {
-            $this->{'_fn_'.$name} = $fn;
+            $this->{'_fn_' . $name} = $fn;
         }
     }
 
@@ -46,9 +40,10 @@ final class FnStream implements StreamInterface
      *
      * @throws \BadMethodCallException
      */
-    public function __get(string $name): void
+    public function __get($name)
     {
-        throw new \BadMethodCallException(\sprintf('%s() is not implemented in the FnStream', DiagnosticValue::escape(str_replace('_fn_', '', $name))));
+        throw new \BadMethodCallException(str_replace('_fn_', '', $name)
+            . '() is not implemented in the FnStream');
     }
 
     /**
@@ -56,14 +51,8 @@ final class FnStream implements StreamInterface
      */
     public function __destruct()
     {
-        if ($this->detached || !isset($this->_fn_close)) {
-            return;
-        }
-
-        try {
-            $this->close();
-        } catch (\Throwable $e) {
-            // Destructors must not surface cleanup failures.
+        if (isset($this->_fn_close)) {
+            call_user_func($this->_fn_close);
         }
     }
 
@@ -72,179 +61,103 @@ final class FnStream implements StreamInterface
      *
      * @throws \LogicException
      */
-    public function __wakeup(): void
+    public function __wakeup()
     {
-        $this->methods = [];
-        $this->detached = true;
-
-        throw new \LogicException(static::class.' should never be unserialized');
-    }
-
-    public function __unserialize(array $data): void
-    {
-        $this->methods = [];
-        $this->detached = true;
-
-        throw new \LogicException(static::class.' should never be unserialized');
+        throw new \LogicException('FnStream should never be unserialized');
     }
 
     /**
      * Adds custom functionality to an underlying stream by intercepting
      * specific method calls.
      *
-     * @param StreamInterface         $stream  Stream to decorate
-     * @param array<string, callable> $methods Hash of method name to a callable
+     * @param StreamInterface $stream  Stream to decorate
+     * @param array           $methods Hash of method name to a closure
+     *
+     * @return FnStream
      */
-    public static function decorate(StreamInterface $stream, array $methods): self
+    public static function decorate(StreamInterface $stream, array $methods)
     {
         // If any of the required methods were not provided, then simply
         // proxy to the decorated stream.
-        foreach (array_diff(self::SLOTS, array_keys($methods)) as $diff) {
-            /** @var callable $callable */
-            $callable = [$stream, $diff];
-            $methods[$diff] = $callable;
+        foreach (array_diff(self::$slots, array_keys($methods)) as $diff) {
+            $methods[$diff] = [$stream, $diff];
         }
 
         return new self($methods);
     }
 
-    public function __toString(): string
+    public function __toString()
     {
-        $this->assertAttached();
-
-        /** @var string */
-        return ($this->_fn___toString)();
+        return call_user_func($this->_fn___toString);
     }
 
-    public function close(): void
+    public function close()
     {
-        if ($this->detached) {
-            return;
-        }
-
-        $close = $this->_fn_close;
-        $this->detached = true;
-        $close();
+        return call_user_func($this->_fn_close);
     }
 
     public function detach()
     {
-        if ($this->detached) {
-            return null;
-        }
-
-        $detach = $this->_fn_detach;
-        $result = $detach();
-        $this->detached = true;
-
-        return $result;
+        return call_user_func($this->_fn_detach);
     }
 
-    public function getSize(): ?int
+    public function getSize()
     {
-        if ($this->detached) {
-            return null;
-        }
-
-        return ($this->_fn_getSize)();
+        return call_user_func($this->_fn_getSize);
     }
 
-    public function tell(): int
+    public function tell()
     {
-        $this->assertAttached();
-
-        return ($this->_fn_tell)();
+        return call_user_func($this->_fn_tell);
     }
 
-    public function eof(): bool
+    public function eof()
     {
-        $this->assertAttached();
-
-        return ($this->_fn_eof)();
+        return call_user_func($this->_fn_eof);
     }
 
-    public function isSeekable(): bool
+    public function isSeekable()
     {
-        if ($this->detached) {
-            return false;
-        }
-
-        return ($this->_fn_isSeekable)();
+        return call_user_func($this->_fn_isSeekable);
     }
 
-    public function rewind(): void
+    public function rewind()
     {
-        $this->assertAttached();
-
-        ($this->_fn_rewind)();
+        call_user_func($this->_fn_rewind);
     }
 
-    public function seek(int $offset, int $whence = SEEK_SET): void
+    public function seek($offset, $whence = SEEK_SET)
     {
-        $this->assertAttached();
-
-        ($this->_fn_seek)($offset, $whence);
+        call_user_func($this->_fn_seek, $offset, $whence);
     }
 
-    public function isWritable(): bool
+    public function isWritable()
     {
-        if ($this->detached) {
-            return false;
-        }
-
-        return ($this->_fn_isWritable)();
+        return call_user_func($this->_fn_isWritable);
     }
 
-    public function write(string $string): int
+    public function write($string)
     {
-        $this->assertAttached();
-
-        return ($this->_fn_write)($string);
+        return call_user_func($this->_fn_write, $string);
     }
 
-    public function isReadable(): bool
+    public function isReadable()
     {
-        if ($this->detached) {
-            return false;
-        }
-
-        return ($this->_fn_isReadable)();
+        return call_user_func($this->_fn_isReadable);
     }
 
-    public function read(int $length): string
+    public function read($length)
     {
-        $this->assertAttached();
-
-        if ($length < 0) {
-            throw new \RuntimeException('Length parameter cannot be negative');
-        }
-
-        return ($this->_fn_read)($length);
+        return call_user_func($this->_fn_read, $length);
     }
 
-    public function getContents(): string
+    public function getContents()
     {
-        $this->assertAttached();
-
-        return ($this->_fn_getContents)();
+        return call_user_func($this->_fn_getContents);
     }
 
-    /**
-     * @return mixed
-     */
-    public function getMetadata(?string $key = null)
+    public function getMetadata($key = null)
     {
-        if ($this->detached) {
-            return $key === null ? [] : null;
-        }
-
-        return ($this->_fn_getMetadata)($key);
-    }
-
-    private function assertAttached(): void
-    {
-        if ($this->detached) {
-            throw new \RuntimeException('Stream is detached');
-        }
+        return call_user_func($this->_fn_getMetadata, $key);
     }
 }

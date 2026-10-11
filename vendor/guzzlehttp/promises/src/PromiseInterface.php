@@ -1,7 +1,5 @@
 <?php
 
-declare(strict_types=1);
-
 namespace GuzzleHttp\Promise;
 
 /**
@@ -11,35 +9,27 @@ namespace GuzzleHttp\Promise;
  * which registers callbacks to receive either a promise’s eventual value or
  * the reason why the promise cannot be fulfilled.
  *
- * @template TValue = mixed
- * @template TReason = mixed
- *
- * @see https://promisesaplus.com/
+ * @link https://promisesaplus.com/
  */
 interface PromiseInterface
 {
-    public const PENDING = 'pending';
-    public const FULFILLED = 'fulfilled';
-    public const REJECTED = 'rejected';
+    const PENDING = 'pending';
+    const FULFILLED = 'fulfilled';
+    const REJECTED = 'rejected';
 
     /**
      * Appends fulfillment and rejection handlers to the promise, and returns
      * a new promise resolving to the return value of the called handler.
      *
-     * @template TFulfilledValue = never
-     * @template TFulfilledReason = never
-     * @template TRejectedValue = never
-     * @template TRejectedReason = never
+     * @param callable $onFulfilled Invoked when the promise fulfills.
+     * @param callable $onRejected  Invoked when the promise is rejected.
      *
-     * @param (callable(TValue): (TFulfilledValue|PromiseInterface<TFulfilledValue, TFulfilledReason>))|null $onFulfilled Invoked when the promise fulfills.
-     * @param (callable(TReason): (TRejectedValue|PromiseInterface<TRejectedValue, TRejectedReason>))|null   $onRejected  Invoked when the promise is rejected.
-     *
-     * @return PromiseInterface<($onFulfilled is null ? TValue : TFulfilledValue)|($onRejected is null ? never : TRejectedValue), ($onFulfilled is null ? never : TFulfilledReason|\Throwable)|($onRejected is null ? TReason : TRejectedReason|\Throwable)>
+     * @return PromiseInterface
      */
     public function then(
-        ?callable $onFulfilled = null,
-        ?callable $onRejected = null
-    ): PromiseInterface;
+        callable $onFulfilled = null,
+        callable $onRejected = null
+    );
 
     /**
      * Appends a rejection handler callback to the promise, and returns a new
@@ -47,14 +37,11 @@ interface PromiseInterface
      * or to its original fulfillment value if the promise is instead
      * fulfilled.
      *
-     * @template TRejectedValue = never
-     * @template TRejectedReason = never
+     * @param callable $onRejected Invoked when the promise is rejected.
      *
-     * @param callable(TReason): (TRejectedValue|PromiseInterface<TRejectedValue, TRejectedReason>) $onRejected Invoked when the promise is rejected.
-     *
-     * @return PromiseInterface<TValue|TRejectedValue, TRejectedReason|\Throwable>
+     * @return PromiseInterface
      */
-    public function otherwise(callable $onRejected): PromiseInterface;
+    public function otherwise(callable $onRejected);
 
     /**
      * Get the state of the promise ("pending", "rejected", or "fulfilled").
@@ -62,34 +49,34 @@ interface PromiseInterface
      * The three states can be checked against the constants defined on
      * PromiseInterface: PENDING, FULFILLED, and REJECTED.
      *
-     * @return self::PENDING|self::FULFILLED|self::REJECTED
+     * @return string
      */
-    public function getState(): string;
+    public function getState();
 
     /**
-     * Resolve the promise with the given value, or with null if no value is given.
+     * Resolve the promise with the given value.
      *
-     * @param TValue|PromiseInterface<TValue, TReason>|null $value
+     * @param mixed $value
      *
      * @throws \RuntimeException if the promise is already resolved.
      */
-    public function resolve($value = null): void;
+    public function resolve($value);
 
     /**
      * Reject the promise with the given reason.
      *
-     * @param TReason $reason
+     * @param mixed $reason
      *
      * @throws \RuntimeException if the promise is already resolved.
      */
-    public function reject($reason): void;
+    public function reject($reason);
 
     /**
      * Cancels the promise if possible.
      *
-     * @see https://github.com/promises-aplus/cancellation-spec/issues/7
+     * @link https://github.com/promises-aplus/cancellation-spec/issues/7
      */
-    public function cancel(): void;
+    public function cancel();
 
     /**
      * Waits until the promise completes if possible.
@@ -99,10 +86,12 @@ interface PromiseInterface
      *
      * If the promise cannot be waited on, then the promise will be rejected.
      *
-     * @return ($unwrap is true ? TValue : null)
+     * @param bool $unwrap
+     *
+     * @return mixed
      *
      * @throws \LogicException if the promise has no wait function or if the
      *                         promise does not settle after waiting.
      */
-    public function wait(bool $unwrap = true);
+    public function wait($unwrap = true);
 }

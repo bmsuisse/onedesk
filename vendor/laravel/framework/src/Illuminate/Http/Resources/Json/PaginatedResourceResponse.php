@@ -25,6 +25,10 @@ class PaginatedResourceResponse extends ResourceResponse
             ),
             $this->calculateStatus()
         ), function ($response) use ($request) {
+            $response->original = $this->resource->resource->map(function ($item) {
+                return $item->resource;
+            });
+
             $this->resource->withResponse($request, $response);
         });
     }

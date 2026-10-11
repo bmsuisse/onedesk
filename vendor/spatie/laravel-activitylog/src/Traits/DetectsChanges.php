@@ -3,7 +3,8 @@
 namespace Spatie\Activitylog\Traits;
 
 use Illuminate\Database\Eloquent\Model;
-use Spatie\Activitylog\Exceptions\CouldNotLogChanges;
+use Illuminate\Support\Arr;
+use Illuminate\Support\Str;
 
 trait DetectsChanges
 {
@@ -16,7 +17,13 @@ trait DetectsChanges
 
                 //temporary hold the original attributes on the model
                 //as we'll need these in the updating event
-                $oldValues = $model->replicate()->setRawAttributes($model->getOriginal());
+                if (method_exists(Model::class, 'getRawOriginal')) {
+                    // Laravel >7.0
+                    $oldValues = (new static)->setRawAttributes($model->getRawOriginal());
+                } else {
+                    // Laravel <7.0
+                    $oldValues = (new static)->setRawAttributes($model->getOriginal());
+                }
 
                 $model->oldAttributes = static::logChanges($oldValues);
             });
@@ -28,16 +35,18 @@ trait DetectsChanges
         $attributes = [];
 
         if (isset(static::$logFillable) && static::$logFillable) {
-            $attributes = array_merge($attributes, $this->fillable);
+            $attributes = array_merge($attributes, $this->getFillable());
+        }
+
+        if ($this->shouldLogUnguarded()) {
+            $attributes = array_merge($attributes, array_diff(array_keys($this->getAttributes()), $this->getGuarded()));
         }
 
         if (isset(static::$logAttributes) && is_array(static::$logAttributes)) {
-            if (in_array('*', static::$logAttributes)) {
-                $withoutWildcard = array_diff(static::$logAttributes, ['*']);
+            $attributes = array_merge($attributes, array_diff(static::$logAttributes, ['*']));
 
-                $attributes = array_merge($attributes, array_keys($this->attributes), $withoutWildcard);
-            } else {
-                $attributes = array_merge($attributes, static::$logAttributes);
+            if (in_array('*', static::$logAttributes)) {
+                $attributes = array_merge($attributes, array_keys($this->getAttributes()));
             }
         }
 
@@ -48,13 +57,30 @@ trait DetectsChanges
         return $attributes;
     }
 
-    public function shouldlogOnlyDirty(): bool
+    public function shouldLogOnlyDirty(): bool
     {
         if (! isset(static::$logOnlyDirty)) {
             return false;
         }
 
         return static::$logOnlyDirty;
+    }
+
+    public function shouldLogUnguarded(): bool
+    {
+        if (! isset(static::$logUnguarded)) {
+            return false;
+        }
+
+        if (! static::$logUnguarded) {
+            return false;
+        }
+
+        if (in_array('*', $this->getGuarded())) {
+            return false;
+        }
+
+        return true;
     }
 
     public function attributeValuesToBeLogged(string $processingEvent): array
@@ -64,22 +90,32 @@ trait DetectsChanges
         }
 
         $properties['attributes'] = static::logChanges(
-            $this->exists
-                ? $this->fresh() ?? $this
-                : $this
+            $processingEvent == 'retrieved'
+                ? $this
+                : (
+                    $this->exists
+                        ? $this->fresh() ?? $this
+                        : $this
+                )
         );
 
         if (static::eventsToBeRecorded()->contains('updated') && $processingEvent == 'updated') {
             $nullProperties = array_fill_keys(array_keys($properties['attributes']), null);
 
             $properties['old'] = array_merge($nullProperties, $this->oldAttributes);
+
+            $this->oldAttributes = [];
         }
 
-        if ($this->shouldlogOnlyDirty() && isset($properties['old'])) {
+        if ($this->shouldLogOnlyDirty() && isset($properties['old'])) {
             $properties['attributes'] = array_udiff_assoc(
                 $properties['attributes'],
                 $properties['old'],
                 function ($new, $old) {
+                    if ($old === null || $new === null) {
+                        return $new === $old ? 0 : 1;
+                    }
+
                     return $new <=> $old;
                 }
             );
@@ -94,11 +130,43 @@ trait DetectsChanges
     public static function logChanges(Model $model): array
     {
         $changes = [];
-        foreach ($model->attributesToBeLogged() as $attribute) {
-            if (str_contains($attribute, '.')) {
+        $attributes = $model->attributesToBeLogged();
+
+        foreach ($attributes as $attribute) {
+            if (Str::contains($attribute, '.')) {
                 $changes += self::getRelatedModelAttributeValue($model, $attribute);
-            } else {
-                $changes += collect($model)->only($attribute)->toArray();
+
+                continue;
+            }
+
+            if (Str::contains($attribute, '->')) {
+                Arr::set(
+                    $changes,
+                    str_replace('->', '.', $attribute),
+                    static::getModelAttributeJsonValue($model, $attribute)
+                );
+
+                continue;
+            }
+
+            $changes[$attribute] = $model->getAttribute($attribute);
+
+            if (is_null($changes[$attribute])) {
+                continue;
+            }
+
+            if ($model->isDateAttribute($attribute)) {
+                $changes[$attribute] = $model->serializeDate(
+                    $model->asDateTime($changes[$attribute])
+                );
+            }
+
+            if ($model->hasCast($attribute)) {
+                $cast = $model->getCasts()[$attribute];
+
+                if ($model->isCustomDateTimeCast($cast)) {
+                    $changes[$attribute] = $model->asDateTime($changes[$attribute])->format(explode(':', $cast, 2)[1]);
+                }
             }
         }
 
@@ -107,14 +175,40 @@ trait DetectsChanges
 
     protected static function getRelatedModelAttributeValue(Model $model, string $attribute): array
     {
-        if (substr_count($attribute, '.') > 1) {
-            throw CouldNotLogChanges::invalidAttribute($attribute);
-        }
+        $relatedModelNames = explode('.', $attribute);
+        $relatedAttribute = array_pop($relatedModelNames);
 
-        list($relatedModelName, $relatedAttribute) = explode('.', $attribute);
+        $attributeName = [];
+        $relatedModel = $model;
 
-        $relatedModel = $model->$relatedModelName ?? $model->$relatedModelName();
+        do {
+            $attributeName[] = $relatedModelName = static::getRelatedModelRelationName($relatedModel, array_shift($relatedModelNames));
 
-        return ["{$relatedModelName}.{$relatedAttribute}" => $relatedModel->$relatedAttribute ?? null];
+            $relatedModel = $relatedModel->$relatedModelName ?? $relatedModel->$relatedModelName();
+        } while (! empty($relatedModelNames));
+
+        $attributeName[] = $relatedAttribute;
+
+        return [implode('.', $attributeName) => $relatedModel->$relatedAttribute ?? null];
+    }
+
+    protected static function getRelatedModelRelationName(Model $model, string $relation): string
+    {
+        return Arr::first([
+            $relation,
+            Str::snake($relation),
+            Str::camel($relation),
+        ], function (string $method) use ($model): bool {
+            return method_exists($model, $method);
+        }, $relation);
+    }
+
+    protected static function getModelAttributeJsonValue(Model $model, string $attribute)
+    {
+        $path = explode('->', $attribute);
+        $modelAttribute = array_shift($path);
+        $modelAttribute = collect($model->getAttribute($modelAttribute));
+
+        return data_get($modelAttribute, implode('.', $path));
     }
 }

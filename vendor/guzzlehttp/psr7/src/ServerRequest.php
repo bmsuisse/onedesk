@@ -1,7 +1,5 @@
 <?php
 
-declare(strict_types=1);
-
 namespace GuzzleHttp\Psr7;
 
 use InvalidArgumentException;
@@ -26,36 +24,50 @@ use Psr\Http\Message\UriInterface;
  */
 class ServerRequest extends Request implements ServerRequestInterface
 {
-    private array $attributes = [];
+    /**
+     * @var array
+     */
+    private $attributes = [];
 
-    private array $cookieParams = [];
+    /**
+     * @var array
+     */
+    private $cookieParams = [];
 
     /**
      * @var array|object|null
      */
     private $parsedBody;
 
-    private array $queryParams = [];
+    /**
+     * @var array
+     */
+    private $queryParams = [];
 
-    private array $serverParams;
+    /**
+     * @var array
+     */
+    private $serverParams;
 
-    private array $uploadedFiles = [];
+    /**
+     * @var array
+     */
+    private $uploadedFiles = [];
 
     /**
      * @param string                               $method       HTTP method
      * @param string|UriInterface                  $uri          URI
-     * @param (string|string[])[]                  $headers      Request headers
+     * @param array                                $headers      Request headers
      * @param string|resource|StreamInterface|null $body         Request body
      * @param string                               $version      Protocol version
      * @param array                                $serverParams Typically the $_SERVER superglobal
      */
     public function __construct(
-        string $method,
+        $method,
         $uri,
         array $headers = [],
         $body = null,
-        string $version = '1.1',
-        #[\SensitiveParameter]
+        $version = '1.1',
         array $serverParams = []
     ) {
         $this->serverParams = $serverParams;
@@ -66,13 +78,83 @@ class ServerRequest extends Request implements ServerRequestInterface
     /**
      * Return an UploadedFile instance array.
      *
-     * @param array $files An array which respect $_FILES structure
+     * @param array $files A array which respect $_FILES structure
+     *
+     * @return array
      *
      * @throws InvalidArgumentException for unrecognized values
      */
-    public static function normalizeFiles(array $files): array
+    public static function normalizeFiles(array $files)
     {
-        return UploadedFileNormalizer::normalize($files);
+        $normalized = [];
+
+        foreach ($files as $key => $value) {
+            if ($value instanceof UploadedFileInterface) {
+                $normalized[$key] = $value;
+            } elseif (is_array($value) && isset($value['tmp_name'])) {
+                $normalized[$key] = self::createUploadedFileFromSpec($value);
+            } elseif (is_array($value)) {
+                $normalized[$key] = self::normalizeFiles($value);
+                continue;
+            } else {
+                throw new InvalidArgumentException('Invalid value in files specification');
+            }
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * Create and return an UploadedFile instance from a $_FILES specification.
+     *
+     * If the specification represents an array of values, this method will
+     * delegate to normalizeNestedFileSpec() and return that return value.
+     *
+     * @param array $value $_FILES struct
+     *
+     * @return array|UploadedFileInterface
+     */
+    private static function createUploadedFileFromSpec(array $value)
+    {
+        if (is_array($value['tmp_name'])) {
+            return self::normalizeNestedFileSpec($value);
+        }
+
+        return new UploadedFile(
+            $value['tmp_name'],
+            (int) $value['size'],
+            (int) $value['error'],
+            $value['name'],
+            $value['type']
+        );
+    }
+
+    /**
+     * Normalize an array of file specifications.
+     *
+     * Loops through all nested files and returns a normalized array of
+     * UploadedFileInterface instances.
+     *
+     * @param array $files
+     *
+     * @return UploadedFileInterface[]
+     */
+    private static function normalizeNestedFileSpec(array $files = [])
+    {
+        $normalizedFiles = [];
+
+        foreach (array_keys($files['tmp_name']) as $key) {
+            $spec = [
+                'tmp_name' => $files['tmp_name'][$key],
+                'size'     => $files['size'][$key],
+                'error'    => $files['error'][$key],
+                'name'     => $files['name'][$key],
+                'type'     => $files['type'][$key],
+            ];
+            $normalizedFiles[$key] = self::createUploadedFileFromSpec($spec);
+        }
+
+        return $normalizedFiles;
     }
 
     /**
@@ -82,92 +164,147 @@ class ServerRequest extends Request implements ServerRequestInterface
      * $_COOKIE
      * $_FILES
      * $_SERVER
+     *
+     * @return ServerRequestInterface
      */
-    public static function fromGlobals(): ServerRequestInterface
+    public static function fromGlobals()
     {
-        return ServerRequestGlobalsFactory::fromArrays(
-            $_SERVER,
-            $_GET,
-            $_POST,
-            $_COOKIE,
-            $_FILES,
-            static function () {
-                if (!\function_exists('apache_request_headers')) {
-                    return false;
-                }
+        $method = isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : 'GET';
+        $headers = getallheaders();
+        $uri = self::getUriFromGlobals();
+        $body = new CachingStream(new LazyOpenStream('php://input', 'r+'));
+        $protocol = isset($_SERVER['SERVER_PROTOCOL']) ? str_replace('HTTP/', '', $_SERVER['SERVER_PROTOCOL']) : '1.1';
 
-                return \apache_request_headers();
-            }
-        );
+        $serverRequest = new ServerRequest($method, $uri, $headers, $body, $protocol, $_SERVER);
+
+        return $serverRequest
+            ->withCookieParams($_COOKIE)
+            ->withQueryParams($_GET)
+            ->withParsedBody($_POST)
+            ->withUploadedFiles(self::normalizeFiles($_FILES));
+    }
+
+    private static function extractHostAndPortFromAuthority($authority)
+    {
+        $uri = 'http://' . $authority;
+        $parts = parse_url($uri);
+        if (false === $parts) {
+            return [null, null];
+        }
+
+        $host = isset($parts['host']) ? $parts['host'] : null;
+        $port = isset($parts['port']) ? $parts['port'] : null;
+
+        return [$host, $port];
     }
 
     /**
      * Get a Uri populated with values from $_SERVER.
+     *
+     * @return UriInterface
      */
-    public static function getUriFromGlobals(): UriInterface
+    public static function getUriFromGlobals()
     {
-        return ServerRequestGlobalsFactory::getUriFromServerParams($_SERVER);
+        $uri = new Uri('');
+
+        $uri = $uri->withScheme(!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off' ? 'https' : 'http');
+
+        $hasPort = false;
+        if (isset($_SERVER['HTTP_HOST'])) {
+            list($host, $port) = self::extractHostAndPortFromAuthority($_SERVER['HTTP_HOST']);
+            if ($host !== null) {
+                $uri = $uri->withHost($host);
+            }
+
+            if ($port !== null) {
+                $hasPort = true;
+                $uri = $uri->withPort($port);
+            }
+        } elseif (isset($_SERVER['SERVER_NAME'])) {
+            $uri = $uri->withHost($_SERVER['SERVER_NAME']);
+        } elseif (isset($_SERVER['SERVER_ADDR'])) {
+            $uri = $uri->withHost($_SERVER['SERVER_ADDR']);
+        }
+
+        if (!$hasPort && isset($_SERVER['SERVER_PORT'])) {
+            $uri = $uri->withPort($_SERVER['SERVER_PORT']);
+        }
+
+        $hasQuery = false;
+        if (isset($_SERVER['REQUEST_URI'])) {
+            $requestUriParts = explode('?', $_SERVER['REQUEST_URI'], 2);
+            $uri = $uri->withPath($requestUriParts[0]);
+            if (isset($requestUriParts[1])) {
+                $hasQuery = true;
+                $uri = $uri->withQuery($requestUriParts[1]);
+            }
+        }
+
+        if (!$hasQuery && isset($_SERVER['QUERY_STRING'])) {
+            $uri = $uri->withQuery($_SERVER['QUERY_STRING']);
+        }
+
+        return $uri;
     }
 
-    public function getServerParams(): array
+    /**
+     * {@inheritdoc}
+     */
+    public function getServerParams()
     {
         return $this->serverParams;
     }
 
-    public function getUploadedFiles(): array
+    /**
+     * {@inheritdoc}
+     */
+    public function getUploadedFiles()
     {
         return $this->uploadedFiles;
     }
 
-    public function withUploadedFiles(array $uploadedFiles): ServerRequestInterface
+    /**
+     * {@inheritdoc}
+     */
+    public function withUploadedFiles(array $uploadedFiles)
     {
-        $stack = [$uploadedFiles];
-
-        for ($i = 0; $i < \count($stack); ++$i) {
-            foreach ($stack[$i] as $uploadedFile) {
-                if ($uploadedFile instanceof UploadedFileInterface) {
-                    continue;
-                }
-
-                if (\is_array($uploadedFile)) {
-                    $stack[] = $uploadedFile;
-                    continue;
-                }
-
-                throw new InvalidArgumentException(sprintf(
-                    'Invalid uploaded file tree; expected UploadedFileInterface instances but %s provided.',
-                    \get_debug_type($uploadedFile)
-                ));
-            }
-        }
-
         $new = clone $this;
         $new->uploadedFiles = $uploadedFiles;
 
         return $new;
     }
 
-    public function getCookieParams(): array
+    /**
+     * {@inheritdoc}
+     */
+    public function getCookieParams()
     {
         return $this->cookieParams;
     }
 
-    public function withCookieParams(
-        #[\SensitiveParameter]
-        array $cookies
-    ): ServerRequestInterface {
+    /**
+     * {@inheritdoc}
+     */
+    public function withCookieParams(array $cookies)
+    {
         $new = clone $this;
         $new->cookieParams = $cookies;
 
         return $new;
     }
 
-    public function getQueryParams(): array
+    /**
+     * {@inheritdoc}
+     */
+    public function getQueryParams()
     {
         return $this->queryParams;
     }
 
-    public function withQueryParams(array $query): ServerRequestInterface
+    /**
+     * {@inheritdoc}
+     */
+    public function withQueryParams(array $query)
     {
         $new = clone $this;
         $new->queryParams = $query;
@@ -176,58 +313,66 @@ class ServerRequest extends Request implements ServerRequestInterface
     }
 
     /**
-     * @return array|object|null
+     * {@inheritdoc}
      */
     public function getParsedBody()
     {
         return $this->parsedBody;
     }
 
-    public function withParsedBody($data): ServerRequestInterface
+    /**
+     * {@inheritdoc}
+     */
+    public function withParsedBody($data)
     {
-        if ($data !== null && !\is_array($data) && !\is_object($data)) {
-            throw new InvalidArgumentException('Parsed body must be an array, object, or null.');
-        }
-
         $new = clone $this;
         $new->parsedBody = $data;
 
         return $new;
     }
 
-    public function getAttributes(): array
+    /**
+     * {@inheritdoc}
+     */
+    public function getAttributes()
     {
         return $this->attributes;
     }
 
     /**
-     * @return mixed
+     * {@inheritdoc}
      */
-    public function getAttribute(string $name, $default = null)
+    public function getAttribute($attribute, $default = null)
     {
-        if (false === array_key_exists($name, $this->attributes)) {
+        if (false === array_key_exists($attribute, $this->attributes)) {
             return $default;
         }
 
-        return $this->attributes[$name];
+        return $this->attributes[$attribute];
     }
 
-    public function withAttribute(string $name, $value): ServerRequestInterface
+    /**
+     * {@inheritdoc}
+     */
+    public function withAttribute($attribute, $value)
     {
         $new = clone $this;
-        $new->attributes[$name] = $value;
+        $new->attributes[$attribute] = $value;
 
         return $new;
     }
 
-    public function withoutAttribute(string $name): ServerRequestInterface
+    /**
+     * {@inheritdoc}
+     */
+    public function withoutAttribute($attribute)
     {
-        if (false === array_key_exists($name, $this->attributes)) {
+        if (false === array_key_exists($attribute, $this->attributes)) {
             return $this;
         }
 
         $new = clone $this;
-        unset($new->attributes[$name]);
+        unset($new->attributes[$attribute]);
 
         return $new;
     }
