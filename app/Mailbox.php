@@ -1136,12 +1136,12 @@ class Mailbox extends Model
 
     public function isInUsernameOauth()
     {
-        return (!strstr($this->in_username, '@') || preg_match("#.*@.*:.*#", $this->in_username));
+        return (!strstr($this->in_username ?? '', '@') || preg_match("#.*@.*:.*#", $this->in_username ?? ''));
     }
 
     public function isOutUsernameOauth()
     {
-        return (!strstr($this->out_username, '@') || preg_match("#.*@.*:.*#", $this->out_username));
+        return (!strstr($this->out_username ?? '', '@') || preg_match("#.*@.*:.*#", $this->out_username ?? ''));
     }
 
     public function isOauthProvider($provider)
@@ -1151,7 +1151,7 @@ class Mailbox extends Model
 
     public function isOutServerOauth()
     {
-        return in_array(trim($this->out_server), [\MailHelper::OAUTH_MICROSOFT_SMTP, \MailHelper::OAUTH_GOOGLE_SMTP]);
+        return in_array(trim($this->out_server ?? ''), [\MailHelper::OAUTH_MICROSOFT_SMTP, \MailHelper::OAUTH_GOOGLE_SMTP]);
     }
 
     public function setEmailAttribute($value)
