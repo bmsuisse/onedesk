@@ -4,6 +4,7 @@ use Illuminate\Http\Request;
 use Illuminate\Routing\Controller as BaseController;
 use Barryvdh\TranslationManager\Models\Translation;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Str;
 
 class Controller extends BaseController
 {
@@ -77,7 +78,7 @@ class Controller extends BaseController
             ->with('numTranslations', $numTranslations)
             ->with('numTodo', $numTodo)
             ->with('numChanged', $numChanged)
-            ->with('editUrl', action('\Barryvdh\TranslationManager\Controller@postEdit', [$group]))
+            ->with('editUrl', $group ? action('\Barryvdh\TranslationManager\Controller@postEdit', [$group]) : null)
             ->with('deleteEnabled', (bool) $this->manager->getConfig('delete_enabled'));
     }
 
@@ -180,15 +181,22 @@ class Controller extends BaseController
     {
         $numFound = $this->manager->findTranslations();
 
-        return ['status' => 'ok', 'counter' => (int) $numFound];
+        return ['status' => 'ok', 'counter' => $numFound];
+    }
+
+    /** Route exists in vendor routes; automatic translation is not supported in FreeScout. */
+    public function postTranslateMissing(Request $request)
+    {
+        return response()->json(['status' => 'error', 'message' => 'Not supported'], 404);
     }
 
     public function postPublish($group = null)
     {
-         $json = false;
+        $json = false;
 
-        if($group === '_json'){
+        if ($group === '_json') {
             $json = true;
+            $group = null;
         }
 
         $this->manager->exportTranslations($group, $json);
@@ -235,7 +243,7 @@ class Controller extends BaseController
 
     protected function sanitizeFilename($input)
     {
-        $input = \Str::ascii(trim($input));
+        $input = Str::ascii(trim($input));
         return str_replace(
             ['<', '>', '%', '/', '\\', '.', ' ', '"', "'", '#', '?'],
             '',
