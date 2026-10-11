@@ -11,6 +11,7 @@ use Illuminate\Broadcasting\Channel;
 use Illuminate\Broadcasting\PrivateChannel;
 use Illuminate\Contracts\Broadcasting\ShouldBroadcastNow;
 use Illuminate\Queue\SerializesModels;
+use Illuminate\Support\Facades\View;
 
 class RealtimeMailboxNewThread implements ShouldBroadcastNow
 {
@@ -105,7 +106,7 @@ class RealtimeMailboxNewThread implements ShouldBroadcastNow
             'mailbox' => $mailbox,
         ];
 
-        $payload->folders_html = \View::make('mailboxes/partials/folders')->with($template_data)->render();
+        $payload->folders_html = View::make('mailboxes/partials/folders')->with($template_data)->render();
 
         // Audio notification for chats.
         if ((int)$payload->is_chat && $payload->thread_id) {
