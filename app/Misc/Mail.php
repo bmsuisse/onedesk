@@ -461,7 +461,9 @@ class Mail
 
         if ($driver == self::MAIL_DRIVER_SMTP) {
             $encryption = (string) config('mail.encryption');
-            $transport = new \Symfony\Component\Mailer\Transport\Smtp\EsmtpTransport(
+            // "tls" = STARTTLS is mandatory (RequireTlsEsmtpTransport), "ssl" = implicit TLS, "none" = opportunistic STARTTLS.
+            $transport_class = $encryption == 'tls' ? \App\Misc\RequireTlsEsmtpTransport::class : \Symfony\Component\Mailer\Transport\Smtp\EsmtpTransport::class;
+            $transport = new $transport_class(
                 (string) config('mail.host'),
                 (int) config('mail.port'),
                 $encryption == 'ssl' ? true : null
