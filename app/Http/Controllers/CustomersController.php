@@ -50,11 +50,6 @@ class CustomersController extends Controller
      */
     public function updateSave($id, Request $request)
     {
-        function mb_ucfirst($string)
-        {
-            return mb_strtoupper(mb_substr($string, 0, 1)).mb_strtolower(mb_substr($string, 1));
-        }
-
         $customer = Customer::findOrFail($id);
         $flash_message = '';
 
@@ -103,7 +98,7 @@ class CustomersController extends Controller
 
         // Detect new emails added
         $customer_emails = $customer->emails()->pluck('email')->toArray();
-        foreach ($request->emails as $email) {
+        foreach ($request->emails ?? [] as $email) {
             if (!in_array($email, $customer_emails)) {
                 $new_emails[] = $email;
             }
@@ -132,7 +127,7 @@ class CustomersController extends Controller
                     } elseif ($customer->first_name) {
                         $email->customer->first_name = $customer->first_name;
                     } else {
-                        $email->customer->first_name = mb_ucfirst($email->getNameFromEmail());
+                        $email->customer->first_name = self::mb_ucfirst($email->getNameFromEmail());
                     }
                     $email->customer->save();
                 }
@@ -152,7 +147,7 @@ class CustomersController extends Controller
 
         // Detect removed emails
         foreach ($customer_emails as $email) {
-            if (!in_array($email, $request->emails)) {
+            if (!in_array($email, $request->emails ?? [])) {
                 $removed_emails[] = $email;
             }
         }
@@ -215,6 +210,14 @@ class CustomersController extends Controller
         \Session::flash('customer.updated', 1);
 
         return redirect()->route('customers.update', ['id' => $id]);
+    }
+
+    /**
+     * Uppercase the first character and lowercase the rest (multibyte-safe).
+     */
+    private static function mb_ucfirst($string)
+    {
+        return mb_strtoupper(mb_substr($string, 0, 1)).mb_strtolower(mb_substr($string, 1));
     }
 
     public function checkLimitVisibility($customer, $return_result = false)
@@ -320,7 +323,7 @@ class CustomersController extends Controller
                     ->orWhere(\Helper::isPgSql() ? \DB::raw('(first_name || \' \' || last_name)') : \DB::raw('CONCAT(first_name, " ", last_name)'), 'like', '%'.$q.'%');
             }
             if ($request->search_by == 'phone') {
-                $phone_numeric = \Helper::phoneToNumeric($q);
+                $phone_numeric = \Helper::phoneToNumeric((string) $q);
                 if (!$phone_numeric) {
                     $phone_numeric = $q;
                 }
@@ -354,8 +357,8 @@ class CustomersController extends Controller
                         // Get phone which matches
                         $phones = $customer->getPhones();
                         foreach ($phones as $phone) {
-                            $phone_numeric = \Helper::phoneToNumeric($q);
-                            if (strstr($phone['value'], $q) || strstr($phone['n'] ?? '', $phone_numeric)) {
+                            $phone_numeric = \Helper::phoneToNumeric((string) $q);
+                            if (strstr((string) $phone['value'], (string) $q) || strstr($phone['n'] ?? '', $phone_numeric)) {
                                 $text = $phone['value'];
                                 if ($customer->getFullName()) {
                                     $text .= ' — '.$customer->getFullName();
