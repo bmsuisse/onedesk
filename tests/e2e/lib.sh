@@ -17,7 +17,7 @@ web_up() {  # php artisan serve on http://localhost:8089 (4 workers), container 
   docker rm -f odtest-web >/dev/null 2>&1; mkdir -p $WORK/builds   # scratch overlay: vars.js bakes APP_URL (the dev checkout has http://localhost), keep the repo untouched
   docker run -d --name odtest-web --network odtest-net -p 8089:8000 --memory 1g -v "$REPO":/app -v $WORK/bootcache:/app/bootstrap/cache -v $WORK/storage:/app/storage -v $WORK/builds:/app/public/js/builds -w /app \
     -e APP_KEY="$(cat $WORK/appkey)" -e APP_ENV=local -e APP_DEBUG=true -e APP_URL=http://127.0.0.1:8089 -e DB_HOST=odtest-db -e DB_DATABASE=e2e -e DB_USERNAME=e2e -e DB_PASSWORD=e2e \
-    -e CACHE_DRIVER=file -e SESSION_DRIVER=file -e QUEUE_DRIVER=${QD:-sync} -e PHP_CLI_SERVER_WORKERS=4 "${@}" ${PHPIMG:-onedesk-e2e-php85} php artisan serve --host=0.0.0.0 --port=8000 >/dev/null
+    -e CACHE_DRIVER=file -e SESSION_DRIVER=file -e QUEUE_DRIVER=${QD:-sync} -e PHP_CLI_SERVER_WORKERS=4 "${@}" ${PHPIMG:-onedesk-e2e-php85} php -S 0.0.0.0:8000 -t public server.php >/dev/null
   docker exec odtest-web php artisan freescout:generate-vars >/dev/null 2>&1
   local i; for i in $(seq 60); do curl -s -o /dev/null http://127.0.0.1:8089/login && return 0; sleep 2; done; echo "odtest-web did not come up"; return 1
 }

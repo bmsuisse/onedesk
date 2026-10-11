@@ -21,17 +21,20 @@
     ],
     "require": {
         "php": ">=7.2",
+        "ext-zip": "*",
         "axn/laravel-laroute": "*",
         "barryvdh/laravel-translation-manager": "*",
         "devfactory/minify": "*",
         "doctrine/dbal": "2.12.1",
         "enshrined/svg-sanitize": "0.22.0",
         "fideloper/proxy": "^4.4",
+        "guzzlehttp/guzzle": "^6.5",
         "html2text/html2text": "4.1.0",
         "javoscript/laravel-macroable-models": "1.0.4",
-        "laravel/framework": "^6.20",
+        "laravel/framework": "^8.83",
         "laravel/helpers": "^1.4",
         "laravel/tinker": "^2.0",
+        "laravel/ui": "^3.4",
         "lord/laroute": "2.5.4",
         "mews/purifier": "dev-customized",
         "nwidart/laravel-modules": "2.7.0",
@@ -41,9 +44,7 @@
         "symfony/polyfill-intl-idn": "*",
         "tormjens/eventy": "0.5.4",
         "watson/rememberable": "*",
-        "webklex/php-imap": "4.1.1",
-        "guzzlehttp/guzzle": "^6.5",
-        "ext-zip": "*"
+        "webklex/php-imap": "4.1.1"
     },
     "require-dev": {
         "mockery/mockery": "^1.3",
