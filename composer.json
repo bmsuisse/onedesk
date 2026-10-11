@@ -75,7 +75,8 @@
             "Html2Text\\": "overrides/html2text/html2text/src/",
             "Codedge\\Updater\\": "overrides/codedge/laravel-selfupdater/src/",
             "Lord\\Laroute\\": "overrides/lord/laroute/src/",
-            "Axn\\Laroute\\": "overrides/axn/laravel-laroute/src/"
+            "Axn\\Laroute\\": "overrides/axn/laravel-laroute/src/",
+            "Barryvdh\\TranslationManager\\": "overrides/barryvdh/laravel-translation-manager/src/"
         },
         "exclude-from-classmap": [
             "Modules/",
