@@ -1,0 +1,50 @@
+# OneDesk: builds the image (./Dockerfile) in the bmscontainer registry, same convention as OneHub:
+# repository onedesk, tag <EnvName>-build<BuildId>-s<StageAttempt>-j<JobAttempt> (main = Production, test = Test).
+# Does not deploy; use the pushed image digest (output of the Build job) in your Container App / Web App.
+trigger:
+  batch: true
+  branches:
+    include:
+      - main
+      - test
+
+variables:
+  - ${{ if eq(variables['Build.SourceBranchName'], 'main') }}:
+    - name: EnvName
+      value: "Production"
+  - ${{ elseif eq(variables['Build.SourceBranchName'], 'test') }}:
+    - name: EnvName
+      value: "Test"
+  - ${{ else }}:
+    - name: EnvName
+      value: "None"
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+  - stage: Build
+    jobs:
+      - job: image
+        displayName: Build and push onedesk image
+        steps:
+          # Pull requests and other branches: only prove that the image builds, nothing is pushed.
+          - script: docker build -t onedesk:ci .
+            displayName: "docker build (validation)"
+            condition: eq(variables['EnvName'], 'None')
+
+          - task: AzureCLI@2
+            displayName: "az acr build onedesk"
+            name: onedeskImage
+            condition: ne(variables['EnvName'], 'None')
+            inputs:
+              azureSubscription: "BMS Subscription - BMS-EASUB-PRD-EUW-CORP-DATA"
+              scriptType: bash
+              scriptLocation: inlineScript
+              inlineScript: |
+                set -euo pipefail
+                image_tag="$(EnvName)-build$(Build.BuildId)-s$(System.StageAttempt)-j$(System.JobAttempt)"
+                az acr build --registry bmscontainer --image "onedesk:$image_tag" -f Dockerfile --verbose .
+                digest=$(az acr repository show --name bmscontainer --image "onedesk:$image_tag" --query digest -o tsv)
+                [[ "$digest" == sha256:* ]]
+                echo "##vso[task.setvariable variable=image;isOutput=true]bmscontainer.azurecr.io/onedesk@$digest"
