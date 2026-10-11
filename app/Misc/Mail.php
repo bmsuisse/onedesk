@@ -887,7 +887,7 @@ class Mail
      */
     public static function generateMessageId($email_address, $raw_body = '')
     {
-        $hash = str_random(16);
+        $hash = \Illuminate\Support\Str::random(16);
         if ($raw_body) {
             $hash = md5(strval($raw_body));
         }
@@ -1307,7 +1307,7 @@ class Mail
     public static function getImapFolder($client, $folder_name)
     {
         // https://github.com/freescout-helpdesk/freescout/issues/3502
-        $folder_name = mb_convert_encoding($folder_name, "UTF7-IMAP", "UTF-8");
+        $folder_name = mb_convert_encoding((string) $folder_name, "UTF7-IMAP", "UTF-8");
 
         if (method_exists($client, 'getFolderByPath')) {
             return $client->getFolderByPath($folder_name);
@@ -1432,8 +1432,8 @@ class Mail
         // https://stackoverflow.com/questions/15276191/why-does-a-diamond-with-a-questionmark-in-it-appear-in-my-html
         $invalid_utf_symbols = ['�'];
 
-        return preg_match_all("/=\?[^\?]+\?[BQ]\?/i", $subject_decoded)
-            || !mb_check_encoding($subject_decoded, 'UTF-8')
+        return preg_match_all("/=\?[^\?]+\?[BQ]\?/i", (string) $subject_decoded)
+            || !mb_check_encoding((string) $subject_decoded, 'UTF-8')
             || \Str::contains($subject_decoded, $invalid_utf_symbols);
     }
 
@@ -1504,7 +1504,7 @@ class Mail
 
     public static function parseEml($content, $mailbox)
     {
-        if (!str_contains($content, "\r\n")){
+        if (!\Illuminate\Support\Str::contains($content, "\r\n")){
             $content = str_replace("\n", "\r\n", $content);
         }
 
@@ -1523,7 +1523,7 @@ class Mail
     // https://github.com/freescout-help-desk/freescout/issues/4282
     public static function substituteEncoding($encoding)
     {
-        $encoding = strtolower($encoding);
+        $encoding = strtolower((string) $encoding);
 
         if (!empty(self::$encoding_substitution[$encoding])) {
             return self::$encoding_substitution[$encoding];
@@ -1569,7 +1569,7 @@ class Mail
 
     public static function isFsMessageId($message_id)
     {
-        return preg_match('/^('.implode('|', self::$all_message_id_prefixes).')/i', $message_id);
+        return preg_match('/^('.implode('|', self::$all_message_id_prefixes).')/i', $message_id ?? '');
     }
 
     // public static function oauthGetProvider($provider_code, $params)
