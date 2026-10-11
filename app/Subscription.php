@@ -9,6 +9,7 @@ use App\Mailbox;
 use App\Notifications\BroadcastNotification;
 use App\Notifications\WebsiteNotification;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\Notification;
 
 class Subscription extends Model
 {
@@ -418,7 +419,7 @@ class Subscription extends Model
                 $website_notification = new WebsiteNotification($notify_info['conversation'], self::chooseThread($notify_info['threads']));
                 $website_notification->delay($delay);
 
-                \Notification::send($notify_info['users'], $website_notification);
+                Notification::send($notify_info['users'], $website_notification);
             }
         }
 
