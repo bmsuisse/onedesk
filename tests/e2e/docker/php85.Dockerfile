@@ -4,5 +4,6 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends libzip-dev libpng-dev libjpeg-dev libicu-dev libxml2-dev libonig-dev git unzip procps default-mysql-client \
  && docker-php-ext-configure gd --with-jpeg \
  && docker-php-ext-install pdo_mysql mbstring zip gd intl xml pcntl \
+ && (apt-get install -y --no-install-recommends autoconf build-essential && pecl install excimer && docker-php-ext-enable excimer || true) \
  && curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer \
  && rm -rf /var/lib/apt/lists/*
