@@ -23,12 +23,14 @@ php_env() { docker exec -e APP_ENV=local -e APP_KEY="$(cat $WORK/appkey)" -e DB_
 sql() { docker exec odtest-db mariadb -ue2e -pe2e e2e -e "$1"; }
 load() { [ -f $STATE ] || { echo "run '$0 up' first"; exit 2; }; source $STATE; }
 
+PHPV=${PHPV:-74}; PHPIMG=onedesk-e2e-php; [ "$PHPV" = 74 ] || PHPIMG=onedesk-e2e-php$PHPV   # PHPV=85 -> PHP 8.5 image
+
 up() {
   case "${1:-quick}" in quick) N=10; M=100;; full) N=40; M=300;; huge) N=100; M=500;; *) echo "profile: quick|full|huge"; exit 2;; esac
   N=${MAILBOXES:-$N}; M=${MAILS:-$M}
   mkdir -p $WORK; echo "N=$N; M=$M" > $STATE; [ -f $WORK/appkey ] || echo "base64:$(openssl rand -base64 32)" > $WORK/appkey
   step "images"
-  docker image inspect onedesk-e2e-php >/dev/null 2>&1 || docker build -q -t onedesk-e2e-php -f $HERE/docker/php74.Dockerfile $HERE/docker >/dev/null
+  docker image inspect $PHPIMG >/dev/null 2>&1 || docker build -q -t $PHPIMG -f $HERE/docker/php$PHPV.Dockerfile $HERE/docker >/dev/null
   docker image inspect onedesk-e2e-dovecot >/dev/null 2>&1 || docker build -q -t onedesk-e2e-dovecot -f $HERE/docker/dovecot.Dockerfile $HERE/docker >/dev/null
   step "containers"
   down >/dev/null 2>&1 || true
@@ -38,7 +40,7 @@ up() {
     --memory ${DB_MEM:-2g} mariadb:10.11 --innodb-buffer-pool-size=512M --max-connections=200 --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --innodb-flush-log-at-trx-commit=2 >/dev/null
   # Overlay bootstrap/cache and storage with scratch dirs: the repo's cached dev config (host od-db) must not win over our env, and fresh() must not wipe dev attachments.
   rm -rf $WORK/bootcache $WORK/storage; mkdir -p $WORK/bootcache $WORK/storage/app $WORK/storage/logs $WORK/storage/framework/{cache,sessions,views}
-  docker run -d --name odtest-php --network $NET --memory ${PHP_MEM:-3g} -v "$REPO":/app -v $WORK/bootcache:/app/bootstrap/cache -v $WORK/storage:/app/storage -w /app onedesk-e2e-php sleep infinity >/dev/null
+  docker run -d --name odtest-php --network $NET --memory ${PHP_MEM:-3g} -v "$REPO":/app -v $WORK/bootcache:/app/bootstrap/cache -v $WORK/storage:/app/storage -w /app $PHPIMG sleep infinity >/dev/null
   until docker exec odtest-db mariadb -ue2e -pe2e -e 'select 1' >/dev/null 2>&1; do sleep 2; done
   step "migrate + seed $N mailboxes"
   php_env odtest-php php artisan package:discover >/dev/null 2>&1 || true
