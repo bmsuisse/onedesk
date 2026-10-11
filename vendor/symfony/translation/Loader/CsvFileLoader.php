@@ -22,7 +22,6 @@ class CsvFileLoader extends FileLoader
 {
     private string $delimiter = ';';
     private string $enclosure = '"';
-    private string $escape = '';
 
     protected function loadResource(string $resource): array
     {
@@ -33,7 +32,7 @@ class CsvFileLoader extends FileLoader
         }
 
         try {
-            while (false !== $data = fgetcsv($file, null, $this->delimiter, $this->enclosure, $this->escape)) {
+            while (false !== $data = fgetcsv($file, null, $this->delimiter, $this->enclosure, '')) {
                 // empty lines are read as [null]
                 if (isset($data[1]) && 2 === \count($data) && !str_starts_with($data[0], '#')) {
                     $messages[$data[0]] = $data[1];
@@ -47,14 +46,11 @@ class CsvFileLoader extends FileLoader
     }
 
     /**
-     * Sets the delimiter, enclosure, and escape character for CSV.
-     *
-     * @return void
+     * Sets the delimiter and enclosure character for CSV.
      */
-    public function setCsvControl(string $delimiter = ';', string $enclosure = '"', string $escape = '')
+    public function setCsvControl(string $delimiter = ';', string $enclosure = '"'): void
     {
         $this->delimiter = $delimiter;
         $this->enclosure = $enclosure;
-        $this->escape = $escape;
     }
 }

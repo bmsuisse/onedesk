@@ -9,7 +9,9 @@ Laravel log viewer
 
 
 ## TL;DR
-Log Viewer for Laravel 6, 7, 8, 9, 10, 11 & 12 and Lumen. **Install with composer, create a route to `LogViewerController`**. No public assets, no vendor routes, works with and/or without log rotate. Inspired by Micheal Mand's [Laravel 4 log viewer](https://github.com/mikemand/logviewer) (works only with laravel 4.1)
+Log Viewer for Laravel 12 & 13. **Install with composer, create a route to `LogViewerController`**. 
+For older Laravel versions and Lumen, please refer to the [older releases](https://github.com/rap2hpoutre/laravel-log-viewer/releases). Please note that those Laravel versions, as well as Lumen, are no longer maintained.
+No public assets, no vendor routes, works with and/or without log rotate. Inspired by Micheal Mand's [Laravel 4 log viewer](https://github.com/mikemand/logviewer) (works only with laravel 4.1)
 
 ## What ?
 Small log viewer for laravel. Looks like this:
@@ -22,35 +24,12 @@ Install via composer
 composer require rap2hpoutre/laravel-log-viewer
 ```
 
-Add Service Provider to `config/app.php` in `providers` section
-```php
-Rap2hpoutre\LaravelLogViewer\LaravelLogViewerServiceProvider::class,
-```
-
 Add a route in your web routes file:
 ```php 
 Route::get('logs', [\Rap2hpoutre\LaravelLogViewer\LogViewerController::class, 'index']);
 ```
 
 Go to `http://myapp/logs` or some other route
-
-### Install (Lumen)
-Install via composer
-```bash
-composer require rap2hpoutre/laravel-log-viewer
-```
-
-Add the following in `bootstrap/app.php`:
-```php
-$app->register(\Rap2hpoutre\LaravelLogViewer\LaravelLogViewerServiceProvider::class);
-```
-
-Explicitly set the namespace in `app/Http/routes.php`:
-```php
-$router->group(['namespace' => '\Rap2hpoutre\LaravelLogViewer'], function() use ($router) {
-    $router->get('logs', 'LogViewerController@index');
-});
-```
 
 ## Advanced usage
 ### Customize view

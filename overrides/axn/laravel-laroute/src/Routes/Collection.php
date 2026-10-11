@@ -1,33 +1,35 @@
 <?php
-/**
- * Overriding vendor class to generate routes for modules.
- */
 
 namespace Axn\Laroute\Routes;
 
 use Illuminate\Routing\Route;
+use Illuminate\Support\Arr;
 use Lord\Laroute\Routes\Collection as BaseCollection;
 
 class Collection extends BaseCollection
 {
-    public $module = null;
-
-    public function __construct(\Illuminate\Routing\RouteCollection $routes, $filter, $namespace, $module = null)
-    {
-        $this->module = $module;
-        $this->items = $this->parseRoutes($routes, $filter, $namespace);
-    }
-
     /**
      * Get the collection of items as JSON **pretty printed**.
      *
      * @return string
      */
+    /**
+     * Module alias to generate routes for (FreeScout); null = routes of the main application only.
+     */
+    public $module = null;
+
+    public function __construct(\Illuminate\Routing\RouteCollectionInterface $routes, $filter, $namespace, $module = null)
+    {
+        $this->module = $module;
+
+        parent::__construct($routes, $filter, $namespace);
+    }
+
     public function toJson($options = 0)
     {
         $options = JSON_PRETTY_PRINT | $options;
 
-        return json_encode($this->toArray(), $options);
+        return json_encode($this->jsonSerialize(), $options);
     }
 
     /**
@@ -44,32 +46,24 @@ class Collection extends BaseCollection
         $data = parent::getRouteInformation($route, $filter, $namespace);
 
         if (!$data || empty($data['name'])) {
-            return;
+            return null;
         }
 
-        // If `module` parameter is set for the route we choose only routes from this module
+        // If `module` is set we choose only routes of this module, otherwise only routes outside of modules (FreeScout).
         $action = $route->getAction();
 
         if ($action && !empty($action['controller'])) {
-            preg_match('/^Modules\\\([^\\\]+)\\\/', $action['controller'], $m);
+            preg_match('/^Modules\\\\([^\\\\]+)\\\\/', $action['controller'], $m);
 
             if (!empty($m[1])) {
-                if (!$this->module) {
-                    // We are generating routes for the main application,
-                    // missing route of the module
-                    return;
-                } else {
-                    // Route belongs to another module
-                    if ($this->module != strtolower($m[1])) {
-                        return;
-                    }
+                if (!$this->module || $this->module != strtolower($m[1])) {
+                    return null;
                 }
             } elseif ($this->module) {
-                // Include only module routes into module JS file
-                return;
+                return null;
             }
         }
 
-        return array_only($data, ['uri', 'name']);
+        return Arr::only($data, ['uri', 'name']);
     }
 }

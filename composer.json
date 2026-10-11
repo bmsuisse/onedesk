@@ -20,9 +20,8 @@
         }
     ],
     "require": {
-        "php": ">=8.1",
+        "php": ">=8.2",
         "ext-zip": "*",
-        "axn/laravel-laroute": "*",
         "barryvdh/laravel-translation-manager": "*",
         "devfactory/minify": "*",
         "doctrine/dbal": "^3.8",
@@ -30,24 +29,23 @@
         "guzzlehttp/guzzle": "^7.5",
         "html2text/html2text": "4.1.0",
         "javoscript/laravel-macroable-models": "1.0.4",
-        "laravel/framework": "^10.48",
+        "laravel/framework": "^12.0",
         "laravel/helpers": "^1.4",
-        "laravel/tinker": "^2.8",
-        "laravel/ui": "^4.0",
-        "lord/laroute": "*",
+        "laravel/tinker": "^2.10",
+        "laravel/ui": "^4.6",
         "mews/purifier": "dev-customized",
         "nwidart/laravel-modules": "2.7.0",
         "rachidlaasri/laravel-installer": "4.0.2",
         "rap2hpoutre/laravel-log-viewer": "*",
-        "spatie/laravel-activitylog": "*",
+        "spatie/laravel-activitylog": "^4.10",
         "symfony/polyfill-intl-idn": "*",
         "tormjens/eventy": "0.5.4",
         "watson/rememberable": "*",
         "webklex/php-imap": "4.1.1"
     },
     "require-dev": {
-        "mockery/mockery": "^1.4",
-        "phpunit/phpunit": "^10.1",
+        "mockery/mockery": "^1.6",
+        "phpunit/phpunit": "^11.5",
         "fakerphp/faker": "^1.9"
     },
     "autoload": {
@@ -75,7 +73,9 @@
             "Rap2hpoutre\\LaravelLogViewer\\": "overrides/rap2hpoutre/laravel-log-viewer/src/Rap2hpoutre/LaravelLogViewer/",
             "Javoscript\\MacroableModels\\": "overrides/javoscript/laravel-macroable-models/src/",
             "Html2Text\\": "overrides/html2text/html2text/src/",
-            "Codedge\\Updater\\": "overrides/codedge/laravel-selfupdater/src/"
+            "Codedge\\Updater\\": "overrides/codedge/laravel-selfupdater/src/",
+            "Lord\\Laroute\\": "overrides/lord/laroute/src/",
+            "Axn\\Laroute\\": "overrides/axn/laravel-laroute/src/"
         },
         "exclude-from-classmap": [
             "Modules/",
@@ -128,7 +128,7 @@
         "sort-packages": true,
         "optimize-autoloader": true,
         "platform": {
-            "php": "8.1.27"
+            "php": "8.5.0"
         }
     }
 }

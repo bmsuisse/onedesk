@@ -32,9 +32,6 @@ class AddNumberIndexToConversationsTable extends Migration
 
     private function hasIndex()
     {
-        $indexes = Schema::getConnection()->getDoctrineSchemaManager()
-            ->listTableIndexes(Schema::getConnection()->getTablePrefix().'conversations');
-
-        return array_key_exists(self::INDEX, $indexes);
+        return Schema::hasIndex('conversations', self::INDEX);
     }
 }

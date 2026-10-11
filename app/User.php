@@ -601,7 +601,7 @@ class User extends Authenticatable
             ]);
 
             // Remove dot from month name.
-            $formatted = $date->formatLocalized($format);
+            $formatted = self::formatDateLocalized($date, $format);
             if (!strstr($format, '.')) {
                 $formatted = str_replace('.', '', $formatted);
             }
@@ -615,6 +615,24 @@ class User extends Authenticatable
         } else {
             return $date->format($format);
         }
+    }
+
+    /**
+     * Carbon 3 has no formatLocalized(): format with an ICU pattern in the application locale
+     * (same behavior as the former Carbon override).
+     */
+    protected static function formatDateLocalized($date, $pattern)
+    {
+        $formatter = new \IntlDateFormatter(
+            config('app.locale'),
+            \IntlDateFormatter::LONG,
+            \IntlDateFormatter::NONE,
+            config('app.timezone'),
+            \IntlDateFormatter::GREGORIAN,
+            $pattern
+        );
+
+        return (string) datefmt_format($formatter, strtotime($date->toDateTimeString()));
     }
 
     /**

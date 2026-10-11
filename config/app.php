@@ -648,6 +648,7 @@ return [
         // Autodiscovery did not work for this one, becasuse it's composer.json
         // does not have a `extra` section.
         Codedge\Updater\UpdaterServiceProvider::class,
+        Axn\Laroute\ServiceProvider::class, // vendored in overrides/ (the packages do not support Laravel 12)
     ],
 
     /*

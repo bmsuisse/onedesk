@@ -43,24 +43,32 @@ class FileStore implements Store, LockProvider
     protected $filePermission;
 
     /**
+     * The classes that should be allowed during unserialization.
+     *
+     * @var array|bool|null
+     */
+    protected $serializableClasses;
+
+    /**
      * Create a new file cache store instance.
      *
      * @param  \Illuminate\Filesystem\Filesystem  $files
      * @param  string  $directory
      * @param  int|null  $filePermission
-     * @return void
+     * @param  array|bool|null  $serializableClasses
      */
-    public function __construct(Filesystem $files, $directory, $filePermission = null)
+    public function __construct(Filesystem $files, $directory, $filePermission = null, $serializableClasses = null)
     {
         $this->files = $files;
         $this->directory = $directory;
         $this->filePermission = $filePermission;
+        $this->serializableClasses = $serializableClasses;
     }
 
     /**
      * Retrieve an item from the cache by key.
      *
-     * @param  string|array  $key
+     * @param  string  $key
      * @return mixed
      */
     public function get($key)
@@ -220,8 +228,8 @@ class FileStore implements Store, LockProvider
         $this->ensureCacheDirectoryExists($this->lockDirectory ?? $this->directory);
 
         return new FileLock(
-            new static($this->files, $this->lockDirectory ?? $this->directory, $this->filePermission),
-            $name,
+            new static($this->files, $this->lockDirectory ?? $this->directory, $this->filePermission, $this->serializableClasses),
+            "file-store-lock:{$name}",
             $seconds,
             $owner
         );
@@ -240,6 +248,55 @@ class FileStore implements Store, LockProvider
     }
 
     /**
+     * Atomically refresh the expiration of a cache key if it matches the expected owner.
+     *
+     * @param  string  $key
+     * @param  mixed  $expectedOwner
+     * @param  int  $seconds
+     * @return bool
+     */
+    public function refreshIfOwned($key, $expectedOwner, $seconds)
+    {
+        $this->ensureCacheDirectoryExists($path = $this->path($key));
+
+        $file = new LockableFile($path, 'c+');
+
+        try {
+            $file->getExclusiveLock();
+        } catch (LockTimeoutException) {
+            $file->close();
+
+            return false;
+        }
+
+        $contents = $file->read();
+
+        if (strlen($contents) < 10) {
+            $file->close();
+
+            return false;
+        }
+
+        $expire = substr($contents, 0, 10);
+
+        $currentOwner = unserialize(substr($contents, 10));
+
+        if ($currentOwner !== $expectedOwner || $this->currentTime() >= $expire) {
+            $file->close();
+
+            return false;
+        }
+
+        $file->truncate()
+            ->write($this->expiration($seconds).serialize($expectedOwner))
+            ->close();
+
+        $this->ensurePermissionsAreCorrect($path);
+
+        return true;
+    }
+
+    /**
      * Remove an item from the cache.
      *
      * @param  string  $key
@@ -248,7 +305,11 @@ class FileStore implements Store, LockProvider
     public function forget($key)
     {
         if ($this->files->exists($file = $this->path($key))) {
-            return $this->files->delete($file);
+            return tap($this->files->delete($file), function ($forgotten) use ($key) {
+                if ($forgotten && $this->files->exists($file = $this->path("illuminate:cache:flexible:created:{$key}"))) {
+                    $this->files->delete($file);
+                }
+            });
         }
 
         return false;
@@ -309,7 +370,7 @@ class FileStore implements Store, LockProvider
         }
 
         try {
-            $data = unserialize(substr($contents, 10));
+            $data = $this->unserialize(substr($contents, 10));
         } catch (Exception) {
             $this->forget($key);
 
@@ -322,6 +383,21 @@ class FileStore implements Store, LockProvider
         $time = $expire - $this->currentTime();
 
         return compact('data', 'time');
+    }
+
+    /**
+     * Unserialize the given value.
+     *
+     * @param  string  $value
+     * @return mixed
+     */
+    protected function unserialize($value)
+    {
+        if ($this->serializableClasses !== null) {
+            return unserialize($value, ['allowed_classes' => $this->serializableClasses]);
+        }
+
+        return unserialize($value);
     }
 
     /**
@@ -378,6 +454,19 @@ class FileStore implements Store, LockProvider
     public function getDirectory()
     {
         return $this->directory;
+    }
+
+    /**
+     * Set the working directory of the cache.
+     *
+     * @param  string  $directory
+     * @return $this
+     */
+    public function setDirectory($directory)
+    {
+        $this->directory = $directory;
+
+        return $this;
     }
 
     /**
