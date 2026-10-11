@@ -6,6 +6,7 @@ use App\Email;
 use App\CustomerChannel;
 use App\Thread;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Support\Facades\File;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
 use Watson\Rememberable\Rememberable;
@@ -1090,7 +1091,7 @@ class Customer extends Model
                 if (array_search($this->country, Customer::$countries)) {
                     $this->country = array_search($this->country, Customer::$countries);
                 }
-                $this->country = strtoupper(mb_substr($this->country, 0, 2));
+                $this->country = strtoupper(mb_substr((string) $this->country, 0, 2));
                 $result = true;
             }
         }
@@ -1409,7 +1410,7 @@ class Customer extends Model
 
         $dest_dir = pathinfo($dest_path, PATHINFO_DIRNAME);
         if (!file_exists($dest_dir)) {
-            \File::makeDirectory($dest_dir, \Helper::DIR_PERMISSIONS);
+            File::makeDirectory($dest_dir, \Helper::DIR_PERMISSIONS);
         }
 
         // Remove current photo
@@ -1539,9 +1540,9 @@ class Customer extends Model
 
         $temp_file = \Helper::getTempFileName();
 
-        \File::put($temp_file, $image_data);
+        File::put($temp_file, $image_data);
 
-        $photo_url = $this->savePhoto($temp_file, \File::mimeType($temp_file));
+        $photo_url = $this->savePhoto($temp_file, File::mimeType($temp_file));
 
         if ($photo_url) {
             $this->photo_url = $photo_url;
@@ -1681,7 +1682,7 @@ class Customer extends Model
 
     public static function findCustomersBySocialProfile($type, $value, $exclude_channel = null)
     {
-        $value = mb_strtolower($value);
+        $value = mb_strtolower((string) $value);
 
         $like = '%'.$value.'","type":'.$type.'}]';
         $customers = Customer::where('social_profiles', \Helper::sqlLikeOperator(), $like)->get();
@@ -1695,7 +1696,7 @@ class Customer extends Model
                     // - username
                     // - @username
                     // - https://example.org/username
-                    && preg_match("#(^|/|@)".preg_quote($value)."$#", trim(mb_strtolower($social_profile['value'])))
+                    && preg_match("#(^|/|@)".preg_quote($value)."$#", trim(mb_strtolower((string) $social_profile['value'])))
                 ) {
                     $ok = true;
                     break;
