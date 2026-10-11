@@ -40,7 +40,7 @@ class SettingsController extends Controller
             'settings'     => $settings,
             'section'      => $section,
             'sections'     => $this->getSections(),
-            'section_name' => $sections[$section]['title'],
+            'section_name' => $sections[$section]['title'] ?? '',
         ];
         $template_vars = $this->getTemplateVars($section, $template_vars);
 
@@ -306,8 +306,8 @@ class SettingsController extends Controller
             // Do not save dummy passwords.
             if (!empty($settings_params[$option_name])
                 && !empty($settings_params[$option_name]['safe_password'])
-                && $request->settings[$option_name]
-                && preg_match("/^\*+$/", $request->settings[$option_name])
+                && !empty($request->settings[$option_name])
+                && preg_match("/^\*+$/", (string) $request->settings[$option_name])
             ) {
                 continue;
             }
