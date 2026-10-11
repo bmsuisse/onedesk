@@ -7,6 +7,8 @@ use Barryvdh\TranslationManager\Models\Translation;
 use Illuminate\Contracts\Events\Dispatcher;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Filesystem\Filesystem;
+use Illuminate\Support\Arr;
+use Illuminate\Support\Str;
 use Symfony\Component\Finder\Finder;
 
 class Manager
@@ -27,6 +29,9 @@ class Manager
     protected $ignoreLocales;
 
     protected $ignoreFilePath;
+
+    /** Keys found by the last findTranslations() call. */
+    protected $foundKeys = [];
 
     public function __construct(Application $app, Filesystem $files, Dispatcher $events)
     {
@@ -94,7 +99,7 @@ class Manager
                 }
 
                 if ($translations && is_array($translations)) {
-                    foreach (array_dot($translations) as $key => $value) {
+                    foreach (Arr::dot($translations) as $key => $value) {
                         $importedTranslation = $this->importTranslation($key, $value, $locale, $group, $replace);
                         $counter += $importedTranslation ? 1 : 0;
                     }
@@ -169,7 +174,8 @@ class Manager
 
         // Find translations in files.
         // This is done quickly.
-        $existingTranslations = $this->findTranslations();
+        $this->findTranslations();
+        $existingTranslations = $this->foundKeys;
 
         // Remove translations which do not exist in files.
         $this->removeNonexisting($existingTranslations);
@@ -464,10 +470,10 @@ class Manager
             $this->missingKey('', $group, $item);
         }
 
-        // Return the number of found translations
-        //return count( $groupKeys + $stringKeys );
-        //return $groupKeys + $stringKeys;
-        return array_merge($groupKeys, $stringKeys);
+        $this->foundKeys = array_merge($groupKeys, $stringKeys);
+
+        // Vendor FindCommand expects the number of found translations.
+        return count($this->foundKeys);
     }
 
     public function missingKey($namespace, $group, $key)
@@ -495,9 +501,30 @@ class Manager
         }
     }
 
-    public function exportTranslations($group = null /*, $json = false*/)
+    public function exportTranslations($group = null, $json = false)
     {
         $basePath = $this->app['path.lang'];
+
+        // Group comes from the request: prevent path traversal.
+        if (is_string($group) && $group !== '') {
+            if (str_contains($group, '..') || str_starts_with($group, '/') || str_contains($group, '\\')) {
+                return;
+            }
+            if (!Str::startsWith($group, 'vendor')) {
+                $group = basename($group);
+            }
+        }
+
+        // JSON export without a group: export all JSON groups (_app and modules).
+        if ($json && ($group === null || $group === '')) {
+            $groups = Translation::whereNotNull('value')->where('group', 'like', '\\_%')->selectDistinctGroup()->get('group');
+            foreach ($groups as $row) {
+                $this->exportTranslations($row->group);
+            }
+            $this->events->dispatch(new TranslationsExportedEvent());
+
+            return;
+        }
 
         $json = false;
         // Detect json groups automatically.
@@ -516,16 +543,17 @@ class Manager
                 if ($group == '*') {
                     return $this->exportAllTranslations();
                 } else {
-                    if (starts_with($group, 'vendor')) {
+                    if (Str::startsWith($group, 'vendor')) {
                         $vendor = true;
                     }
                 }
 
                 $tree = $this->makeTree(Translation::ofTranslatedGroup($group)
-                                                    ->orderByGroupKeys(array_get($this->config, 'sort_keys', false))
+                                                    ->orderByGroupKeys(Arr::get($this->config, 'sort_keys', false))
                                                     ->get());
 
                 foreach ($tree as $locale => $groups) {
+                    $locale = basename($locale);
                     if (isset($groups[$group])) {
                         $translations = $groups[$group];
                         $path = $this->app['path.lang'];
@@ -533,7 +561,7 @@ class Manager
                         $locale_path = $locale.DIRECTORY_SEPARATOR.$group;
                         if ($vendor) {
                             $path = $basePath.'/'.$group.'/'.$locale;
-                            $locale_path = str_after($group, '/');
+                            $locale_path = Str::after($group, '/');
                         }
                         $subfolders = explode(DIRECTORY_SEPARATOR, $locale_path);
                         array_pop($subfolders);
@@ -560,10 +588,12 @@ class Manager
 
         if ($json) {
             $tree = $this->makeTree(Translation::ofTranslatedGroup($group)
-                                                ->orderByGroupKeys(array_get($this->config, 'sort_keys', false))
+                                                ->orderByGroupKeys(Arr::get($this->config, 'sort_keys', false))
                                                 ->get(), true);
 
             foreach ($tree as $locale => $groups) {
+                $locale = basename($locale);
+                $modulePath = '';
                 if (!$moduleAlias) {
                     // _json
                     $path = $this->app['path.lang'].'/'.$locale.'.json';
@@ -580,6 +610,9 @@ class Manager
                     }
                 }
 
+                if (empty($groups[$group])) {
+                    continue;
+                }
                 $translations = $groups[$group];
                 // Sort translations alphabetically.
                 ksort($translations);
@@ -607,7 +640,7 @@ class Manager
                 // }
             }
 
-            Translation::ofTranslatedGroup(self::JSON_GROUP)->update(['status' => Translation::STATUS_SAVED]);
+            Translation::ofTranslatedGroup($group)->update(['status' => Translation::STATUS_SAVED]);
         }
 
         $this->events->dispatch(new TranslationsExportedEvent());
@@ -637,7 +670,7 @@ class Manager
                 $this->jsonSet($array[$translation->locale][$translation->group], $translation->key,
                     $translation->value);
             } else {
-                array_set($array[$translation->locale][$translation->group], $translation->key,
+                Arr::set($array[$translation->locale][$translation->group], $translation->key,
                     $translation->value);
             }
         }
