@@ -9,9 +9,12 @@ use App\MailboxUser;
 use App\Thread;
 use App\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Response;
 use Illuminate\Support\Facades\Route;
-use Validator;
+use Illuminate\Support\Facades\Session;
+use Illuminate\Support\Facades\Validator;
 
 class MailboxesController extends Controller
 {
@@ -88,7 +91,7 @@ class MailboxesController extends Controller
 
         $request_data = [
             'email'   => $request->email,
-            'name'    => trim(strip_tags($request->name)),
+            'name'    => trim(strip_tags($request->name ?? '')),
             'ratings' => $request->ratings ?? 1,
         ];
 
@@ -100,7 +103,7 @@ class MailboxesController extends Controller
         $mailbox->users()->sync($request->users ?: []);
         $mailbox->syncPersonalFolders($request->users);
 
-        \Session::flash('flash_success_floating', __('Mailbox created successfully'));
+        Session::flash('flash_success_floating', __('Mailbox created successfully'));
 
         return redirect()->route('mailboxes.update', ['id' => $mailbox->id]);
     }
@@ -281,7 +284,7 @@ class MailboxesController extends Controller
 
         $mailbox->save();
 
-        \Session::flash('flash_success_floating', __('Mailbox settings saved'));
+        Session::flash('flash_success_floating', __('Mailbox settings saved'));
 
         return redirect()->route('mailboxes.update', ['id' => $id]);
     }
@@ -389,7 +392,7 @@ class MailboxesController extends Controller
             $mailbox_with_settings->settings->save();
         }
 
-        \Session::flash('flash_success_floating', __('Mailbox permissions saved!'));
+        Session::flash('flash_success_floating', __('Mailbox permissions saved!'));
 
         return redirect()->route('mailboxes.permissions', ['id' => $id]);
     }
@@ -457,7 +460,7 @@ class MailboxesController extends Controller
         // Sometimes background job continues to use old connection settings.
         \Helper::queueWorkerRestart();
 
-        \Session::flash('flash_success_floating', __('Connection settings saved!'));
+        Session::flash('flash_success_floating', __('Connection settings saved!'));
 
         return redirect()->route('mailboxes.connection', ['id' => $id]);
     }
@@ -558,7 +561,7 @@ class MailboxesController extends Controller
 
         $mailbox->save();
 
-        \Session::flash('flash_success_floating', __('Connection settings saved!'));
+        Session::flash('flash_success_floating', __('Connection settings saved!'));
 
         return redirect()->route('mailboxes.connection.incoming', ['id' => $id]);
     }
@@ -607,7 +610,7 @@ class MailboxesController extends Controller
     {
         $flashes = [];
 
-        if ($mailbox && \Auth::user()->can('admin', $mailbox)) {
+        if ($mailbox && Auth::user()->can('admin', $mailbox)) {
             if (Route::currentRouteName() != 'mailboxes.connection' && !$mailbox->isOutActive()) {
                 $flashes[] = [
                     'type'      => 'warning',
@@ -660,7 +663,7 @@ class MailboxesController extends Controller
 
         if ($request->auto_reply_enabled) {
             $post = $request->all();
-            $post['auto_reply_message'] = strip_tags($post['auto_reply_message']);
+            $post['auto_reply_message'] = strip_tags($post['auto_reply_message'] ?? '');
             $validator = Validator::make($post, [
                 'auto_reply_subject' => 'required|string|max:128',
                 'auto_reply_message' => 'required|string',
@@ -690,7 +693,7 @@ class MailboxesController extends Controller
 
         $mailbox->save();
 
-        \Session::flash('flash_success_floating', __('Auto Reply status saved'));
+        Session::flash('flash_success_floating', __('Auto Reply status saved'));
 
         return redirect()->route('mailboxes.auto_reply', ['id' => $id]);
     }
@@ -911,7 +914,7 @@ class MailboxesController extends Controller
 
                     $mailbox->deleteMailbox();
 
-                    \Session::flash('flash_success_floating', __('Mailbox deleted'));
+                    Session::flash('flash_success_floating', __('Mailbox deleted'));
 
                     $response['status'] = 'success';
                 }
@@ -955,7 +958,7 @@ class MailboxesController extends Controller
             $response['msg'] = 'Unknown error occurred';
         }
 
-        return \Response::json($response);
+        return Response::json($response);
     }
 
     // Recursively interate over folders.
@@ -1033,8 +1036,8 @@ class MailboxesController extends Controller
         }
 
         $session_data = [];
-        if (\Session::get('mailbox_oauth_'.$provider.'_'.$mailbox_id)) {
-            $session_data = \Session::get('mailbox_oauth_'.$provider.'_'.$mailbox_id);
+        if (Session::get('mailbox_oauth_'.$provider.'_'.$mailbox_id)) {
+            $session_data = Session::get('mailbox_oauth_'.$provider.'_'.$mailbox_id);
         }
 
         if (empty($request->code)) {
@@ -1050,7 +1053,7 @@ class MailboxesController extends Controller
                 'client_id' => $username,
             ]);
             if ($url) {
-                \Session::put('mailbox_oauth_'.$provider.'_'.$mailbox_id, $state);
+                Session::put('mailbox_oauth_'.$provider.'_'.$mailbox_id, $state);
                 //     [
                 //     'provider' => $request->provider,
                 //     'mailbox_id' => $request->mailbox_id,
@@ -1064,7 +1067,7 @@ class MailboxesController extends Controller
         // Check given state against previously stored one to mitigate CSRF attack
         } elseif (empty($request->state) || ($state_data['state'] ?? '') !== ($session_data['state'] ?? '')) {
             
-            \Session::forget('mailbox_oauth_'.$provider.'_'.$mailbox_id);
+            Session::forget('mailbox_oauth_'.$provider.'_'.$mailbox_id);
             return 'Invalid oAuth state';
 
         } else {
