@@ -142,9 +142,9 @@ class Mail
     public static $last_mail_config_hash = '';
 
     /**
-     * Used to get SMTP queue id when sending emails to customers.
+     * Not used anymore (the queue id is parsed from SentMessage::getDebug()), kept for modules.
      */
-    public static $smtp_queue_id_plugin_registered = false;
+    public static $smtp_queue_id_plugin_registered = true;
     
     /**
      * Used to store the last sent email message.
@@ -197,7 +197,7 @@ class Mail
                 }
             }
 
-            \Config::set('mail.driver', $mailbox->getMailDriverName());
+            \Config::set('mail.fs_driver', $mailbox->getMailDriverName());
             \Config::set('mail.from', $mailbox->getMailFrom($user_from, $conversation));
 
             // SMTP.
@@ -222,7 +222,7 @@ class Mail
             }
         } else {
             // Use default settings
-            \Config::set('mail.driver', \Config::get('mail.driver'));
+            \Config::set('mail.fs_driver', \Config::get('mail.fs_driver'));
             \Config::set('mail.from', ['address' => self::getSystemMailFrom(), 'name' => '']);
         }
 
@@ -243,16 +243,9 @@ class Mail
             return false;
         }
 
-        // Without doing this, Swift mailer uses old config values
-        // if there were emails sent with previous config.
-        \App::forgetInstance('mailer');
-        \App::forgetInstance('swift.mailer');
-        \App::forgetInstance('swift.transport');
-
-        (new \Illuminate\Mail\MailServiceProvider(app()))->register();
-        // We have to update Mailer facade manually, as it does not happen automatically
-        // and previous instance of app('mailer') is used.
-        \Mail::swap(app('mailer'));
+        // Without doing this, the previously created transport (old host, credentials) is reused.
+        app('mail.manager')->purge('freescout');
+        \Mail::clearResolvedInstance('mail.manager');
 
         \Eventy::action('mail.reapply_mail_config');
     }
@@ -264,14 +257,14 @@ class Mail
      */
     public static function setSystemMailDriver()
     {
-        \Config::set('mail.driver', self::getSystemMailDriver());
+        \Config::set('mail.fs_driver', self::getSystemMailDriver());
         \Config::set('mail.from', [
             'address' => self::getSystemMailFrom(),
             'name'    => Option::get('company_name', \Config::get('app.name')),
         ]);
 
         // SMTP
-        if (\Config::get('mail.driver') == self::MAIL_DRIVER_SMTP) {
+        if (\Config::get('mail.fs_driver') == self::MAIL_DRIVER_SMTP) {
             \Config::set('mail.host', Option::get('mail_host'));
             \Config::set('mail.port', Option::get('mail_port'));
             if (!Option::get('mail_username')) {
@@ -414,12 +407,93 @@ class Mail
         return Option::get('mail_driver', 'mail');
     }
 
+    /**
+     * Collects the SMTP dialogue of a send (Symfony Mailer exposes it via SentMessage::getDebug() / TransportException::getDebug()).
+     */
     public static function registerSmtpLogger()
     {
-        $logger = new \Swift_Plugins_Loggers_ArrayLogger();
-        \Mail::getSwiftMailer()->registerPlugin(new \Swift_Plugins_LoggerPlugin($logger));
+        return new class {
+            public $text = '';
 
-        return $logger;
+            public function dump()
+            {
+                return $this->text;
+            }
+        };
+    }
+
+    /**
+     * Symfony Mailer reports refused recipients by throwing, there is no failures() list anymore.
+     */
+    public static function failures()
+    {
+        return [];
+    }
+
+    /**
+     * Get SMTP queue id from the SMTP dialogue ("250 2.0.0 Ok: queued as ABC123").
+     */
+    public static function parseSmtpQueueId($smtp_debug)
+    {
+        if (preg_match("#queued as ([^\r\n ]+)[\r\n]#", (string) $smtp_debug, $m) && trim($m[1])) {
+            return trim($m[1]);
+        }
+
+        return null;
+    }
+
+    /**
+     * Set Message-ID header (id without angle brackets).
+     */
+    public static function setMessageId($email, $message_id)
+    {
+        $email->getHeaders()->remove('Message-ID');
+        $email->getHeaders()->addIdHeader('Message-ID', trim((string) $message_id, '<> '));
+    }
+
+    /**
+     * Mail transport for Laravel's mail manager ("freescout" mailer, built from the legacy mail.* config
+     * that setMailDriver() / setSystemMailDriver() fill in at runtime).
+     */
+    public static function createTransport()
+    {
+        $driver = config('mail.fs_driver');
+
+        if ($driver == self::MAIL_DRIVER_SMTP) {
+            $encryption = (string) config('mail.encryption');
+            $transport = new \Symfony\Component\Mailer\Transport\Smtp\EsmtpTransport(
+                (string) config('mail.host'),
+                (int) config('mail.port'),
+                $encryption == 'ssl' ? true : null
+            );
+            // Note: unlike SwiftMailer, Symfony Mailer always upgrades to TLS via STARTTLS when the server offers it, even if encryption is "none".
+
+            if (config('mail.username')) {
+                $transport->setUsername((string) config('mail.username'));
+                $transport->setPassword((string) config('mail.password'));
+            }
+            if (config('mail.auth_mode') == 'XOAUTH2') {
+                $transport->setAuthenticators([new \Symfony\Component\Mailer\Transport\Smtp\Auth\XOAuth2Authenticator()]);
+            }
+            $stream = $transport->getStream();
+            $stream->setTimeout((float) config('mail.smtp_timeout', 25));
+            if (!config('mail.verify_peer', true)) {
+                $stream->setStreamOptions(['ssl' => ['verify_peer' => false, 'verify_peer_name' => false, 'allow_self_signed' => true]]);
+            }
+
+            return $transport;
+        }
+
+        // "sendmail" and "mail" (PHP mail()): pipe the raw message to the sendmail binary.
+        $command = $driver == self::MAIL_DRIVER_MAIL
+            ? (ini_get('sendmail_path') ?: '/usr/sbin/sendmail')
+            : preg_replace('# -bs\b#', ' -t -i', (string) config('mail.sendmail', '/usr/sbin/sendmail -t -i'));
+        // Symfony requires the "-t" (raw message) or "-bs" (SMTP over pipe) flag.
+        if (!preg_match('# -(?:t|bs)\b#', $command)) {
+            $command .= ' -t -i';
+        }
+
+        return new \Symfony\Component\Mailer\Transport\SendmailTransport($command);
     }
 
     /**
@@ -441,10 +515,12 @@ class Mail
             $status_message = '';
 
             try {
-                \Mail::to([$to])->send(new \App\Mail\Test($mailbox));
+                $sent_message = \Mail::to([$to])->send(new \App\Mail\Test($mailbox));
+                $smtp_logger->text = $sent_message ? $sent_message->getDebug() : '';
             } catch (\Exception $e) {
                 // We come here in case SMTP server unavailable for example
                 $status_message = $e->getMessage();
+                $smtp_logger->text = method_exists($e, 'getDebug') ? $e->getDebug() : '';
             }
         } else {
             // System email
@@ -454,21 +530,23 @@ class Mail
             $status_message = '';
 
             try {
-                \Mail::to([['name' => '', 'email' => $to]])
+                $sent_message = \Mail::to([['name' => '', 'email' => $to]])
                     ->send(new \App\Mail\Test());
+                $smtp_logger->text = $sent_message ? $sent_message->getDebug() : '';
             } catch (\Exception $e) {
                 // We come here in case SMTP server unavailable for example
                 $status_message = $e->getMessage();
+                $smtp_logger->text = method_exists($e, 'getDebug') ? $e->getDebug() : '';
             }
         }
 
-        if (\Mail::failures() || $status_message) {
+        if (\MailHelper::failures() || $status_message) {
             SendLog::log(null, null, $to, SendLog::MAIL_TYPE_TEST, SendLog::STATUS_SEND_ERROR, null, null, $status_message);
             if ($status_message) {
                 $result['msg'] = $status_message;
             }
             $result['status'] = 'error';
-            $result['log'] = $smtp_logger->dump();
+            $result['log'] = self::sanitizeSmtpStatusMessage($smtp_logger->dump());
         } else {
             SendLog::log(null, null, $to, SendLog::MAIL_TYPE_TEST, SendLog::STATUS_ACCEPTED);
 
@@ -612,7 +690,7 @@ class Mail
             return false;
         }
 
-        if (\Mail::failures()) {
+        if (\MailHelper::failures()) {
             return false;
         } else {
             return true;
@@ -1288,7 +1366,7 @@ class Mail
 
         $custom_headers = explode(';', $custom_headers_str);
 
-        $mailable->withSwiftMessage(function ($swiftmessage) use ($custom_headers) {
+        $mailable->withSymfonyMessage(function ($swiftmessage) use ($custom_headers) {
             $headers = $swiftmessage->getHeaders();
 
             foreach ($custom_headers as $custom_header) {
@@ -1497,6 +1575,9 @@ class Mail
     public static function sanitizeSmtpStatusMessage($status_message)
     {
         $status_message = preg_replace('#(username ")[^"]+(")#', '$1***$2', $status_message ?? '');
+        // Symfony Mailer SMTP dialogue: credentials follow AUTH commands / 334 challenges as base64.
+        $status_message = preg_replace('#(> AUTH (?:PLAIN|XOAUTH2) )\S+#', '$1***', $status_message ?? '');
+        $status_message = preg_replace('#(< 334[^\r\n]*\r?\n> )[A-Za-z0-9+/=]+#', '$1***', $status_message ?? '');
         $status_message = preg_replace("#(Swift_Transport_Esmtp_Auth_LoginAuthenticator\->authenticate\(Object\(Swift_SmtpTransport\), ')[^\']+(', ')[^\']+('\))#", '$1***$2***$3', $status_message ?? '');
 
         return $status_message;

@@ -2,6 +2,13 @@
 
 return [
 
+    // Laravel 9+ mail manager: one dynamic mailer, built by MailHelper::createTransport() from the legacy keys below
+    // (driver, host, port, encryption, username, password, auth_mode), which MailHelper::setMailDriver() changes at runtime.
+    'default' => 'freescout',
+    'mailers' => [
+        'freescout' => ['transport' => 'freescout'],
+    ],
+
     /*
     |--------------------------------------------------------------------------
     | Mail Driver
@@ -16,7 +23,7 @@ return [
     |
     */
 
-    'driver' => env('MAIL_DRIVER', 'mail'),
+    'fs_driver' => env('MAIL_DRIVER', 'mail'), // not 'driver': Laravel 10's mail manager would prefer that key over mail.default
 
     /*
     |--------------------------------------------------------------------------

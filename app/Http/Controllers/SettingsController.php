@@ -230,7 +230,7 @@ class SettingsController extends Controller
                 break;
             case 'emails':
                 $mail_defaults = [
-                    'mail_driver'     => \Config::get('mail.driver'),
+                    'mail_driver'     => \Config::get('mail.fs_driver'),
                     'mail_host'       => \Config::get('mail.host'),
                     'mail_port'       => \Config::get('mail.port'),
                     'mail_username'   => \Config::get('mail.username'),

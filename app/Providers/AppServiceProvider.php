@@ -22,6 +22,11 @@ class AppServiceProvider extends ServiceProvider
         // "SQLSTATE[42000]: Syntax error or access violation: 1071 Specified key was too long; max key length is 767 bytes"
         Schema::defaultStringLength(191);
 
+        // Single dynamic mailer (see config/mail.php).
+        \Mail::extend('freescout', function () {
+            return \MailHelper::createTransport();
+        });
+
         // Models observers
         \App\Mailbox::observe(\App\Observers\MailboxObserver::class);
         // Eloquent events for this table are not called automatically, so need to be called manually.

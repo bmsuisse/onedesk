@@ -64,5 +64,4 @@ return [
      * the FORWARDED and X_FORWARDED_HOST headers should be set to null 
      * as they are currently unsupported there.
      */
-    'headers' => Illuminate\Http\Request::HEADER_X_FORWARDED_ALL,
 ];

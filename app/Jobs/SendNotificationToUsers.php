@@ -180,7 +180,7 @@ class SendNotificationToUsers implements ShouldQueue
                 $status = SendLog::STATUS_SEND_ERROR;
                 $status_message = $exception->getMessage();
             } else {
-                $failures = Mail::failures();
+                $failures = \MailHelper::failures();
 
                 // Save to send log
                 if (!empty($failures) && in_array($user->email, $failures)) {

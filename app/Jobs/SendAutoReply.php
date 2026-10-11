@@ -116,7 +116,7 @@ class SendAutoReply implements ShouldQueue
                 $status = SendLog::STATUS_SEND_ERROR;
                 $status_message = $exception->getMessage();
             } else {
-                $failures = Mail::failures();
+                $failures = \MailHelper::failures();
 
                 // Status for send log
                 if (!empty($failures) && in_array($recipient, $failures)) {

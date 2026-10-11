@@ -18,7 +18,6 @@ class EventServiceProvider extends ServiceProvider
         ],
 
         'Illuminate\Mail\Events\MessageSent' => [
-            'App\Listeners\RestartSwiftMailer',
         ],
 
         'Illuminate\Auth\Events\Registered' => [

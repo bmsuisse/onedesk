@@ -10,6 +10,8 @@ declare(strict_types=1);
 namespace Nette\Utils;
 
 use Nette;
+use function array_map, array_search, array_splice, count, explode, implode, is_a, is_resource, is_string, strcasecmp, strtolower, substr, trim;
+use const PHP_VERSION_ID;
 
 
 /**
@@ -18,37 +20,28 @@ use Nette;
 final class Type
 {
 	/** @var array<int, string|self> */
-	private $types;
-
-	/** @var bool */
-	private $simple;
-
-	/** @var string  |, & */
-	private $kind;
+	private array $types;
+	private bool $simple;
+	private string $kind; // | &
 
 
 	/**
 	 * Creates a Type object based on reflection. Resolves self, static and parent to the actual class name.
 	 * If the subject has no type, it returns null.
-	 * @param  \ReflectionFunctionAbstract|\ReflectionParameter|\ReflectionProperty  $reflection
 	 */
-	public static function fromReflection($reflection): ?self
+	public static function fromReflection(
+		\ReflectionFunctionAbstract|\ReflectionParameter|\ReflectionProperty $reflection,
+	): ?self
 	{
-		if ($reflection instanceof \ReflectionProperty && PHP_VERSION_ID < 70400) {
-			return null;
-		} elseif ($reflection instanceof \ReflectionMethod) {
-			$type = $reflection->getReturnType() ?? (PHP_VERSION_ID >= 80100 ? $reflection->getTentativeReturnType() : null);
-		} else {
-			$type = $reflection instanceof \ReflectionFunctionAbstract
-				? $reflection->getReturnType()
-				: $reflection->getType();
-		}
+		$type = $reflection instanceof \ReflectionFunctionAbstract
+			? $reflection->getReturnType() ?? (PHP_VERSION_ID >= 80100 && $reflection instanceof \ReflectionMethod ? $reflection->getTentativeReturnType() : null)
+			: $reflection->getType();
 
-		return $type ? self::fromReflectionType($type, $reflection, true) : null;
+		return $type ? self::fromReflectionType($type, $reflection, asObject: true) : null;
 	}
 
 
-	private static function fromReflectionType(\ReflectionType $type, $of, bool $asObject)
+	private static function fromReflectionType(\ReflectionType $type, $of, bool $asObject): self|string
 	{
 		if ($type instanceof \ReflectionNamedType) {
 			$name = self::resolve($type->getName(), $of);
@@ -58,11 +51,8 @@ final class Type
 
 		} elseif ($type instanceof \ReflectionUnionType || $type instanceof \ReflectionIntersectionType) {
 			return new self(
-				array_map(
-					function ($t) use ($of) { return self::fromReflectionType($t, $of, false); },
-					$type->getTypes()
-				),
-				$type instanceof \ReflectionUnionType ? '|' : '&'
+				array_map(fn($t) => self::fromReflectionType($t, $of, asObject: false), $type->getTypes()),
+				$type instanceof \ReflectionUnionType ? '|' : '&',
 			);
 
 		} else {
@@ -97,16 +87,37 @@ final class Type
 
 
 	/**
-	 * Resolves 'self', 'static' and 'parent' to the actual class name.
-	 * @param  \ReflectionFunctionAbstract|\ReflectionParameter|\ReflectionProperty  $of
+	 * Creates a Type object based on the actual type of value.
 	 */
-	public static function resolve(string $type, $of): string
+	public static function fromValue(mixed $value): self
+	{
+		$type = get_debug_type($value);
+		if (is_resource($value)) {
+			$type = 'mixed';
+		} elseif (str_ends_with($type, '@anonymous')) {
+			$parent = substr($type, 0, -10);
+			$type = $parent === 'class' ? 'object' : $parent;
+		}
+
+		return new self([$type]);
+	}
+
+
+	/**
+	 * Resolves 'self', 'static' and 'parent' to the actual class name.
+	 */
+	public static function resolve(
+		string $type,
+		\ReflectionFunctionAbstract|\ReflectionParameter|\ReflectionProperty $of,
+	): string
 	{
 		$lower = strtolower($type);
 		if ($of instanceof \ReflectionFunction) {
 			return $type;
-		} elseif ($lower === 'self' || $lower === 'static') {
+		} elseif ($lower === 'self') {
 			return $of->getDeclaringClass()->name;
+		} elseif ($lower === 'static') {
+			return ($of instanceof ReflectionMethod ? $of->getOriginalClass() : $of->getDeclaringClass())->name;
 		} elseif ($lower === 'parent' && $of->getDeclaringClass()->getParentClass()) {
 			return $of->getDeclaringClass()->getParentClass()->name;
 		} else {
@@ -117,7 +128,7 @@ final class Type
 
 	private function __construct(array $types, string $kind = '|')
 	{
-		$o = array_search('null', $types, true);
+		$o = array_search('null', $types, strict: true);
 		if ($o !== false) { // null as last
 			array_splice($types, $o, 1);
 			$types[] = 'null';
@@ -145,14 +156,29 @@ final class Type
 
 
 	/**
+	 * Returns a type that accepts both the current type and the given type.
+	 */
+	public function with(string|self $type): self
+	{
+		$type = is_string($type) ? self::fromString($type) : $type;
+		return match (true) {
+			$this->allows($type) => $this,
+			$type->allows($this) => $type,
+			default => new self(array_unique(
+				array_merge($this->isIntersection() ? [$this] : $this->types, $type->isIntersection() ? [$type] : $type->types),
+				SORT_REGULAR,
+			), '|'),
+		};
+	}
+
+
+	/**
 	 * Returns the array of subtypes that make up the compound type as strings.
 	 * @return array<int, string|string[]>
 	 */
 	public function getNames(): array
 	{
-		return array_map(function ($t) {
-			return $t instanceof self ? $t->getNames() : $t;
-		}, $this->types);
+		return array_map(fn($t) => $t instanceof self ? $t->getNames() : $t, $this->types);
 	}
 
 
@@ -162,9 +188,7 @@ final class Type
 	 */
 	public function getTypes(): array
 	{
-		return array_map(function ($t) {
-			return $t instanceof self ? $t : new self([$t]);
-		}, $this->types);
+		return array_map(fn($t) => $t instanceof self ? $t : new self([$t]), $this->types);
 	}
 
 
@@ -243,40 +267,37 @@ final class Type
 	/**
 	 * Verifies type compatibility. For example, it checks if a value of a certain type could be passed as a parameter.
 	 */
-	public function allows(string $subtype): bool
+	public function allows(string|self $type): bool
 	{
 		if ($this->types === ['mixed']) {
 			return true;
 		}
 
-		$subtype = self::fromString($subtype);
-		return $subtype->isUnion()
-			? Arrays::every($subtype->types, function ($t) {
-				return $this->allows2($t instanceof self ? $t->types : [$t]);
-			})
-			: $this->allows2($subtype->types);
+		$type = is_string($type) ? self::fromString($type) : $type;
+		return $type->isUnion()
+			? Arrays::every($type->types, fn($t) => $this->allowsAny($t instanceof self ? $t->types : [$t]))
+			: $this->allowsAny($type->types);
 	}
 
 
-	private function allows2(array $subtypes): bool
+	private function allowsAny(array $givenTypes): bool
 	{
 		return $this->isUnion()
-			? Arrays::some($this->types, function ($t) use ($subtypes) {
-				return $this->allows3($t instanceof self ? $t->types : [$t], $subtypes);
-			})
-			: $this->allows3($this->types, $subtypes);
+			? Arrays::some($this->types, fn($t) => $this->allowsAll($t instanceof self ? $t->types : [$t], $givenTypes))
+			: $this->allowsAll($this->types, $givenTypes);
 	}
 
 
-	private function allows3(array $types, array $subtypes): bool
+	private function allowsAll(array $ourTypes, array $givenTypes): bool
 	{
-		return Arrays::every($types, function ($type) use ($subtypes) {
-			$builtin = Validators::isBuiltinType($type);
-			return Arrays::some($subtypes, function ($subtype) use ($type, $builtin) {
-				return $builtin
-					? strcasecmp($type, $subtype) === 0
-					: is_a($subtype, $type, true);
-			});
-		});
+		return Arrays::every(
+			$ourTypes,
+			fn($ourType) => Arrays::some(
+				$givenTypes,
+				fn($givenType) => Validators::isBuiltinType($ourType)
+					? strcasecmp($ourType, $givenType) === 0
+					: is_a($givenType, $ourType, allow_string: true),
+			),
+		);
 	}
 }

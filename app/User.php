@@ -756,7 +756,7 @@ class User extends Authenticatable
             }
         }
 
-        if (\Mail::failures()) {
+        if (\MailHelper::failures()) {
             saveToSendLog($this, SendLog::STATUS_SEND_ERROR);
 
             if ($throw_exceptions) {
@@ -826,7 +826,7 @@ class User extends Authenticatable
             return false;
         }
 
-        if (\Mail::failures()) {
+        if (\MailHelper::failures()) {
             saveToSendLog($this, SendLog::STATUS_SEND_ERROR);
 
             return false;

@@ -42,6 +42,7 @@ class Translation extends Model{
 
         switch (DB::getDriverName()){
             case 'mysql':
+            case 'mariadb':
                 $select = 'DISTINCT `group`';
                 break;
             default:
@@ -50,6 +51,20 @@ class Translation extends Model{
         }
 
         return $query->select(DB::raw($select));
+    }
+
+    /**
+     * Get the current connection name for the model.
+     *
+     * @return string|null
+     */
+    public function getConnectionName()
+    {
+        if ($connection = config('translation-manager.db_connection')){
+            return $connection;
+        }
+
+        return parent::getConnectionName();
     }
 
 }

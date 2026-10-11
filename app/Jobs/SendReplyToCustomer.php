@@ -6,7 +6,6 @@ use App\Mail\ReplyToCustomer;
 use App\Customer;
 use App\SendLog;
 use App\Thread;
-use App\Misc\SwiftGetSmtpQueueId;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -282,11 +281,6 @@ class SendReplyToCustomer implements ShouldQueue
         // Configure mail driver according to Mailbox settings
         \MailHelper::setMailDriver($mailbox, $this->last_thread->created_by_user, $this->conversation, $this->last_thread);
 
-        // https://github.com/freescout-helpdesk/freescout/issues/3330
-        if (!\MailHelper::$smtp_queue_id_plugin_registered) {
-            \Mail::getSwiftMailer()->registerPlugin(new SwiftGetSmtpQueueId());
-            \MailHelper::$smtp_queue_id_plugin_registered = true;
-        }
 
         $this->message_id = $this->last_thread->getMessageId($mailbox);
         $headers['Message-ID'] = $this->message_id;
@@ -365,7 +359,7 @@ class SendReplyToCustomer implements ShouldQueue
         $smtp_queue_id = null;
         
         try {
-            Mail::to($to)
+            $sent_message = Mail::to($to)
                 ->cc($cc_array)
                 ->bcc($bcc_array)
                 ->send($reply_mail);
@@ -373,7 +367,7 @@ class SendReplyToCustomer implements ShouldQueue
             $this->last_thread->send_status = SendLog::STATUS_ACCEPTED;
             $this->last_thread->save();
 
-            $smtp_queue_id = SwiftGetSmtpQueueId::$last_smtp_queue_id;
+            $smtp_queue_id = \MailHelper::parseSmtpQueueId($sent_message ? $sent_message->getDebug() : '');
         } catch (\Exception $e) {
             // We come here in case SMTP server unavailable for example
             if ($this->attempts() == 1) {
@@ -389,7 +383,7 @@ class SendReplyToCustomer implements ShouldQueue
             }
 
             // Failures will be saved to send log when retry attempts will finish
-            // Mail::failures() is empty in case of connection error.
+            // \MailHelper::failures() is empty in case of connection error.
             $this->failures = $this->recipients;
 
             // Save to send log (only first attempt).
@@ -437,8 +431,6 @@ class SendReplyToCustomer implements ShouldQueue
                 return;
             }
         }
-
-        SwiftGetSmtpQueueId::$last_smtp_queue_id = null;
 
         // Clean error message if email finally has been sent.
         if ($this->last_thread->send_status == SendLog::STATUS_SEND_ERROR) {
@@ -587,7 +579,7 @@ class SendReplyToCustomer implements ShouldQueue
         // $this->last_thread->save();
 
         // Laravel tells us exactly what email addresses failed
-        $this->failures = Mail::failures();
+        $this->failures = \MailHelper::failures();
 
         // Save to send log
         $this->saveToSendLog('', $smtp_queue_id);

@@ -266,9 +266,14 @@ class Manager
                     }
                 }
 
-                $tree = $this->makeTree(Translation::ofTranslatedGroup($group)
-                                                    ->orderByGroupKeys(Arr::get($this->config, 'sort_keys', false))
-                                                    ->get());
+                $models = [];
+                Translation::ofTranslatedGroup($group)
+                    ->orderByGroupKeys(Arr::get($this->config, 'sort_keys', false))
+                    ->chunkById(50000, function ($chunk) use (&$models) {
+                        $models = array_merge($models, $chunk->all());
+                    });
+
+                $tree = $this->makeTree($models);
 
                 foreach ($tree as $locale => $groups) {
                     $locale = basename($locale);
@@ -294,7 +299,11 @@ class Manager
                             }
                         }
 
-                        $path = $path.DIRECTORY_SEPARATOR.$locale.DIRECTORY_SEPARATOR.$group.'.php';
+                        if ($vendor) {
+                            $path = $path.DIRECTORY_SEPARATOR.'messages.php';
+                        } else {
+                            $path = $path.DIRECTORY_SEPARATOR.$locale.DIRECTORY_SEPARATOR.$group.'.php';
+                        }
 
                         $output = "<?php\n\nreturn ".var_export($translations, true).';'.\PHP_EOL;
                         $this->files->put($path, $output);
@@ -343,7 +352,8 @@ class Manager
     {
         $array = [];
         foreach ($translations as $translation) {
-            if ($json) {
+            // For JSON and sentences, do not use dotted notation
+            if ($json || Str::contains($translation->key, [' ']) || Str::endsWith($translation->key, ['.'])) {
                 $this->jsonSet($array[$translation->locale][$translation->group], $translation->key,
                     $translation->value);
             } else {
