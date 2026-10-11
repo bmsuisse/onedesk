@@ -22,7 +22,6 @@ use App\SendLog;
 use App\Thread;
 use App\User;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Input;
 use Validator;
 
 class ConversationsController extends Controller
@@ -272,7 +271,7 @@ class ConversationsController extends Controller
             if ($customer->getFullName()) {
                 $name = [$customer->id => $customer->getFullName()];
             }
-            $last_phone = array_last($customer->getPhones());
+            $last_phone = \Illuminate\Support\Arr::last($customer->getPhones());
             if (!empty($last_phone)) {
                 $phone = $last_phone['value'];
             }
@@ -417,12 +416,12 @@ class ConversationsController extends Controller
             $orig_thread = Thread::find($request->from_thread_id);
             if ($orig_thread && auth()->user()->can('view', $orig_thread->conversation)) {
                 $subject = $orig_thread->conversation->subject;
-                $subject = preg_replace('/^Fwd:/i', 'Re: ', $subject);
+                $subject = preg_replace('/^Fwd:/i', 'Re: ', $subject ?? '');
 
                 $thread = new Thread();
                 $thread->body = $orig_thread->body;
                 // If this is a forwarded message, try to fetch From
-                preg_match_all("/From:[^<\n]+<([^<\n]+)>/m", html_entity_decode(strip_tags($thread->body)), $m);
+                preg_match_all("/From:[^<\n]+<([^<\n]+)>/m", html_entity_decode(strip_tags($thread->body ?? '')), $m);
 
                 if (!empty($m[1])) {
                     foreach ($m[1] as $value) {
@@ -850,7 +849,7 @@ class ConversationsController extends Controller
                     $max_message_size = (int)config('app.max_message_size');
                     if ($max_message_size) {
                         // Todo: take into account conversation history.
-                        $message_size = mb_strlen($body, '8bit');
+                        $message_size = mb_strlen($body ?? '', '8bit');
 
                         // Calculate attachments size.
                         $attachments_ids = array_merge($request->attachments ?? [], $request->embeds ?? []);
@@ -1542,7 +1541,7 @@ class ConversationsController extends Controller
                             if (count($to_array)) {
                                 if (count($to_array) == 1) {
                                     //$customer_email = array_first($to_array);
-                                    $to = array_first($to_array);
+                                    $to = \Illuminate\Support\Arr::first($to_array);
                                     $customer = Customer::create($customer_email);
                                 } else {
                                     // Creating a conversation to multiple customers
@@ -2563,7 +2562,7 @@ class ConversationsController extends Controller
      */
     public function ajaxHtmlSendLog()
     {
-        $thread_id = Input::get('thread_id');
+        $thread_id = request()->get('thread_id');
         if (!$thread_id) {
             abort(404);
         }
@@ -2605,7 +2604,7 @@ class ConversationsController extends Controller
      */
     public function ajaxHtmlShowOriginal()
     {
-        $thread_id = Input::get('thread_id');
+        $thread_id = request()->get('thread_id');
         if (!$thread_id) {
             abort(404);
         }
@@ -2647,7 +2646,7 @@ class ConversationsController extends Controller
      */
     public function ajaxHtmlChangeCustomer()
     {
-        $conversation_id = Input::get('conversation_id');
+        $conversation_id = request()->get('conversation_id');
         if (!$conversation_id) {
             abort(404);
         }
@@ -2673,7 +2672,7 @@ class ConversationsController extends Controller
      */
     public function ajaxHtmlMoveConv()
     {
-        $conversation_id = Input::get('conversation_id');
+        $conversation_id = request()->get('conversation_id');
         if (!$conversation_id) {
             abort(404);
         }
@@ -2702,7 +2701,7 @@ class ConversationsController extends Controller
      */
     public function ajaxHtmlMergeConv()
     {
-        $conversation_id = Input::get('conversation_id');
+        $conversation_id = request()->get('conversation_id');
         if (!$conversation_id) {
             abort(404);
         }
@@ -2744,8 +2743,8 @@ class ConversationsController extends Controller
     {
         $users = collect([]);
 
-        $mailbox_id = Input::get('mailbox_id');
-        $user_id = Input::get('user_id');
+        $mailbox_id = request()->get('mailbox_id');
+        $user_id = request()->get('user_id');
 
         $user = auth()->user();
 
@@ -2786,7 +2785,7 @@ class ConversationsController extends Controller
      */
     public function ajaxHtmlDefaultRedirect()
     {
-        $mailbox_id = Input::get('mailbox_id');
+        $mailbox_id = request()->get('mailbox_id');
         if (!$mailbox_id) {
             abort(404);
         }
