@@ -34,7 +34,7 @@ class Option extends Model
      */
     public static function set($name, $value)
     {
-        $name = trim($name);
+        $name = trim((string) $name);
         if (empty($name)) {
             return false;
         }
@@ -111,7 +111,7 @@ class Option extends Model
             return $options[$option_name]['default'];
         } else {
             // Try to get default option value from module's config.
-            preg_match("/^([a-z_]+)\.(.*)/", $option_name, $m);
+            preg_match("/^([a-z_]+)\.(.*)/", (string) $option_name, $m);
 
             if (!empty($m[1]) && !empty($m[2])) {
                 $module_alias = $m[1];
