@@ -15,6 +15,9 @@ use Illuminate\Broadcasting\BroadcastManager;
 use Illuminate\Contracts\Broadcasting\Factory as BroadcastingFactory;
 use Illuminate\Foundation\Application;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Broadcast;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Session;
 use Illuminate\Support\ServiceProvider;
 
 class PolycastServiceProvider extends ServiceProvider
@@ -50,16 +53,16 @@ class PolycastServiceProvider extends ServiceProvider
 
             // establish connection and send current time
             $this->app['router']->post('polycast/connect', function (Request $request) {
-                \Broadcast::auth($request);
+                Broadcast::auth($request);
 
                 return ['status' => 'success', 'time' => Carbon::now()->toDateTimeString()];
             });
 
             // send payloads to requested browser
             $this->app['router']->post('polycast/receive', function (Request $request) {
-                \Broadcast::auth($request);
+                Broadcast::auth($request);
 
-                $query = \DB::table('polycast_events')
+                $query = DB::table('polycast_events')
                     ->select('*');
 
                 $channels = $request->get('channels', []);
@@ -75,7 +78,7 @@ class PolycastServiceProvider extends ServiceProvider
                     // https://github.com/freescout-help-desk/freescout/security/advisories/GHSA-gh3r-jh6q-wrvj
                     $channel = \Helper::sqlEscapeLike($channel);
 
-                    foreach ($events as $event) {
+                    foreach ($events ?? [] as $event) {
                         // No need to add index to DB for this query.
                         $query->orWhere(function ($query) use ($channel, $event, $request) {
                             $query->where('channels', 'like', '%"'.$channel.'"%')
@@ -91,8 +94,8 @@ class PolycastServiceProvider extends ServiceProvider
                 $payload = $collection->map(function ($item, $key) use ($request) {
                     $created = \Carbon\Carbon::createFromFormat('Y-m-d H:i:s', $item->created_at);
                     $requested = \Carbon\Carbon::createFromFormat('Y-m-d H:i:s', $request->get('time'));
-                    $item->channels = json_decode($item->channels, false);
-                    $item->payload = json_decode($item->payload, false);
+                    $item->channels = json_decode((string)$item->channels, false);
+                    $item->payload = json_decode((string)$item->payload, false);
                     // Add extra data to the payload - used in RealtimeBroadcastNotificationCreated.
                     // This works only if payload has medius and thread_id
                     $item->data = BroadcastNotification::fetchPayloadData($item->payload);
@@ -115,7 +118,7 @@ class PolycastServiceProvider extends ServiceProvider
 
                 // Reflash session data - otherwise on reply flash alert is not displayed
                 // https://stackoverflow.com/questions/37019294/laravel-ajax-call-deletes-session-flash-data
-                \Session::reflash();
+                Session::reflash();
 
                 $this->processConvView($request);
 
@@ -160,11 +163,11 @@ class PolycastServiceProvider extends ServiceProvider
                     $view_date = Carbon::createFromFormat('Y-m-d H:i:s', $cache_data['t']);
 
                     // Let other users know that user started to reply.
-                    if (!(int)$cache_data['r'] && (int)$request->data['replying']) {
+                    if (!(int)$cache_data['r'] && (int)($request->data['replying'] ?? 0)) {
                         // Started to reply.
                         \App\Events\RealtimeConvView::dispatchSelf($viewing_conversation_id, $user, true);
                         $replying_changed = true;
-                    } elseif ((int)$cache_data['r'] && !(int)$request->data['replying']) {
+                    } elseif ((int)$cache_data['r'] && !(int)($request->data['replying'] ?? 0)) {
                         // Finished to reply.
                         \App\Events\RealtimeConvView::dispatchSelf($viewing_conversation_id, $user, false);
                         $replying_changed = true;
@@ -179,7 +182,7 @@ class PolycastServiceProvider extends ServiceProvider
                 // Store for 2 minutes.
                 $cache_data = [
                     't' => $now->toDateTimeString(),
-                    'r' => (int)$request->data['replying']
+                    'r' => (int)($request->data['replying'] ?? 0)
                 ];
                 \Cache::put($cache_key, $cache_data, 1);
 

@@ -2,7 +2,11 @@
 
 namespace App\Providers;
 
+use Illuminate\Support\Facades\Config;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Session;
+use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -31,7 +35,7 @@ class AppServiceProvider extends ServiceProvider
         \App\Follower::observe(\App\Observers\FollowerObserver::class);
         \Illuminate\Notifications\DatabaseNotification::observe(\App\Observers\DatabaseNotificationObserver::class);
 
-        \Validator::extend('safehost', function ($attribute, $value, $parameters, $validator) {
+        Validator::extend('safehost', function ($attribute, $value, $parameters, $validator) {
             if (!$value) {
                 return true;
             }
@@ -70,7 +74,7 @@ class AppServiceProvider extends ServiceProvider
         }
 
         // If APP_KEY is not set, redirect to /install.php
-        if (!\Config::get('app.key') && !app()->runningInConsole() && !file_exists(storage_path('.installed'))) {
+        if (!Config::get('app.key') && !app()->runningInConsole() && !file_exists(storage_path('.installed'))) {
             // Not defined here yet
             //\Artisan::call("freescout:clear-cache");
             redirect(\Helper::getSubdirectory().'/install.php')->send();
@@ -81,7 +85,7 @@ class AppServiceProvider extends ServiceProvider
 
             $msg = __('The :module_name module has been deactivated due to an error: :error_message', ['module_name' => $module->getName(), 'error_message' => $exception->getMessage()]);
 
-            \Log::error($msg);
+            Log::error($msg);
 
             // request() does is empty at this stage
             if (!empty($_POST['action']) && $_POST['action'] == 'activate') {
@@ -89,7 +93,7 @@ class AppServiceProvider extends ServiceProvider
                 // During module activation in case of any error we have to deactivate module.
                 \App\Module::deactiveModule($module->getAlias());
 
-                \Session::flash('flashes_floating', [[
+                Session::flash('flashes_floating', [[
                     'text' => $msg,
                     'type' => 'danger',
                     'role' => \App\User::ROLE_ADMIN,
@@ -102,7 +106,7 @@ class AppServiceProvider extends ServiceProvider
                 if (strstr($exception->getMessage(), 'No such file or directory')) {
                     \App\Module::deactiveModule($module->getAlias());
 
-                    \Session::flash('flashes_floating', [[
+                    Session::flash('flashes_floating', [[
                         'text' => $msg,
                         'type' => 'danger',
                         'role' => \App\User::ROLE_ADMIN,
