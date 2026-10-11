@@ -917,7 +917,7 @@ class Helper
 
     public static function getDomain()
     {
-        return parse_url(\Config::get('app.url'), PHP_URL_HOST);
+        return parse_url(\Config::get('app.url') ?? '', PHP_URL_HOST);
     }
 
     /**
@@ -988,7 +988,7 @@ class Helper
      */
     public static function checkAppVersion($version2, $operator = '>=')
     {
-        return version_compare(\Config::get('app.version'), $version2, $operator);
+        return version_compare(\Config::get('app.version') ?? '', $version2, $operator);
     }
 
     /**
@@ -1196,7 +1196,7 @@ class Helper
 
     public static function setLocale($locale)
     {
-        if (in_array($locale, config('app.locales'))) {
+        if (in_array($locale, config('app.locales') ?? [])) {
             app()->setLocale($locale);
         }
     }
@@ -1646,9 +1646,9 @@ class Helper
         // Connect to the address that was actually validated above, not to
         // the original hostname (which fsockopen() would otherwise resolve
         // again on its own, at a different point in time).
-        $ips = array_first(self::$last_request['ips'] ?? []);
+        $ips = \Illuminate\Support\Arr::first(self::$last_request['ips'] ?? []);
 
-        $host = array_first($ips);
+        $host = \Illuminate\Support\Arr::first($ips);
         if (!$host) {
             // Could not determine host IP.
             return false;
@@ -2203,7 +2203,7 @@ class Helper
             return '';
         }
 
-        $host_white_list_str = str_replace(' ', '', mb_strtolower(config('app.remote_host_white_list')));
+        $host_white_list_str = str_replace(' ', '', mb_strtolower(config('app.remote_host_white_list') ?? ''));
         $host_white_list = explode(',', $host_white_list_str);
 
         // Sanitize host name.
@@ -2645,7 +2645,7 @@ class Helper
         $escaped_regex = preg_quote(implode('', $illegal_chars), '/');
 
         // https://github.com/freescout-helpdesk/freescout/issues/3377
-        $file_name = mb_convert_encoding($file_name, 'UTF-8', 'UTF-8');
+        $file_name = mb_convert_encoding($file_name ?? '', 'UTF-8', 'UTF-8');
         $file_name = preg_replace('/[' . $escaped_regex . ']/', '_', $file_name);
         $file_name = preg_replace("/[\t\r\n]/", '', $file_name);
         // Remove unprintable characters and invalid unicode characters.
@@ -2672,7 +2672,7 @@ class Helper
 
         if ($rename) { 
             $file_name = $file_name.'_';
-        } elseif ($ext == 'pdf' || in_array(strtolower($mime_type), $pdf_mime_types)) {
+        } elseif ($ext == 'pdf' || in_array(strtolower($mime_type ?? ''), $pdf_mime_types)) {
             // Rename PDF to avoid running embedded JavaScript.
             if ($uploaded_file && !$contents) {
                 $contents = file_get_contents($uploaded_file->getRealPath() ?: $uploaded_file->getPathname());
@@ -2719,7 +2719,7 @@ class Helper
 
     public static function getProtocol($url = '')
     {
-        return mb_strtolower(parse_url($url ?: config('app.url'), PHP_URL_SCHEME) ?: 'http');
+        return mb_strtolower(parse_url($url ?: (config('app.url') ?? ''), PHP_URL_SCHEME) ?: 'http');
     }
 
     // Check if APP_URL contains https:// protocol.
@@ -2772,6 +2772,7 @@ class Helper
      */
     public static function parseDateToCarbon($date, $current_if_invalid = true)
     {
+        $date = (string) $date;
         if (preg_match('/\+0580/', $date)) {
             $date = str_replace('+0580', '+0530', $date);
         }
@@ -2839,7 +2840,7 @@ class Helper
 
     public static function phoneToNumeric($phone)
     {
-        $phone = preg_replace("/[^0-9]/", '', $phone);
+        $phone = preg_replace("/[^0-9]/", '', $phone ?? '');
         return (string)$phone;
     }
 
@@ -3171,9 +3172,9 @@ class Helper
     {
         // Remove unprintable characters and invalid unicode characters.
         // https://github.com/freescout-help-desk/freescout/issues/4681
-        $string = preg_replace("#\p{C}+#u", '', $string);
+        $string = preg_replace("#\p{C}+#u", '', $string ?? '');
         // https://github.com/freescout-help-desk/freescout/issues/2123#issuecomment-2775392740
-        $string = preg_replace("#\p{Cf}+#u", '', $string);
+        $string = preg_replace("#\p{Cf}+#u", '', $string ?? '');
 
         return $string;
     }
@@ -3181,7 +3182,7 @@ class Helper
     public static function stripUnsafeChars($string)
     {
         // Remove Unicode control characters and null bytes
-        $string = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', '', $string);
+        $string = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', '', $string ?? '');
 
         return $string;
     }
@@ -3352,7 +3353,7 @@ class Helper
         if (!\Helper::memoryCacheEnabled()) {
             return null;
         }
-        return array_get(self::$memory_cache, $key);
+        return \Illuminate\Support\Arr::get(self::$memory_cache, $key);
     }
 
     // "key" may use "dot" notation: conversation.id
@@ -3361,7 +3362,7 @@ class Helper
         if (!\Helper::memoryCacheEnabled()) {
             return false;
         }
-        array_set(self::$memory_cache, $key, $value);
+        \Illuminate\Support\Arr::set(self::$memory_cache, $key, $value);
     }
 
     public static function isLocalStorage($disk = '')
