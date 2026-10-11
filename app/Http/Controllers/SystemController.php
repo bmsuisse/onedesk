@@ -38,7 +38,7 @@ class SystemController extends Controller
 
         // Permissions.
         $permissions = [];
-        foreach (config('installer.permissions') as $perm_path => $perm_value) {
+        foreach (config('installer.permissions') ?? [] as $perm_path => $perm_value) {
             $path = base_path($perm_path);
             $value = '';
             if (file_exists($path)) {
@@ -207,7 +207,7 @@ class SystemController extends Controller
                 }
             });
 
-            if ($latest_version && version_compare($latest_version, \Config::get('app.version'), '>')) {
+            if ($latest_version && version_compare($latest_version, (string) \Config::get('app.version'), '>')) {
                 $new_version_available = true;
             }
         } else {
@@ -423,11 +423,11 @@ class SystemController extends Controller
                 $html = '';
                 $payload = json_decode($job->payload, true);
 
-                if (!empty($payload['data']['command'])) {
+                if (!empty($payload['data']['command'] ?? '')) {
                     $html .= '<pre>'.\Helper::stripDangerousTags(print_r(unserialize($payload['data']['command'], ['allowed_classes' => false]), 1)).'</pre>';
                 }
                 
-                $html .= '<pre>'.\Helper::stripDangerousTags($job->exception).'</pre>';
+                $html .= '<pre>'.\Helper::stripDangerousTags((string) $job->exception).'</pre>';
 
                 return response($html);
         }
