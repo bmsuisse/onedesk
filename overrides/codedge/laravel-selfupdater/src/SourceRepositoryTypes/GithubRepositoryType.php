@@ -219,6 +219,12 @@ class GithubRepositoryType extends AbstractRepositoryType implements SourceRepos
                 File::copy($file->getRealPath(), base_path($file->getFilename()));
             });
 
+            // New version may have different providers/packages: stale cached files
+            // in /bootstrap/cache would make the app fail with "Class not found".
+            foreach (['config', 'services', 'packages'] as $cache_file) {
+                File::delete(base_path('bootstrap/cache/'.$cache_file.'.php'));
+            }
+
             File::deleteDirectory($sourcePath);
             $this->deleteVersionFile();
             event(new UpdateSucceeded($version));
